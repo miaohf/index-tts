@@ -36,7 +36,32 @@ logging.basicConfig(level=logging.INFO,
 logger = logging.getLogger("indextts2-api")
 
 # 创建FastAPI应用
-app = FastAPI(title="IndexTTS 2.0 API", version="2.0.0")
+_API_DESCRIPTION = """
+## IndexTTS 2.0 API 使用说明
+
+### 服务启动
+```bash
+python api_server.py
+# 或指定端口: uvicorn api_server:app --host 0.0.0.0 --port 8002
+```
+默认地址: http://localhost:8002  
+交互式文档: http://localhost:8002/docs
+
+### 端点概览
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | / | 服务信息与端点列表 |
+| GET | /speakers | 获取可用说话人列表 |
+| POST | /tts | 基础 TTS（兼容 1.0） |
+| POST | /tts_v2 | 增强 TTS（情感控制等） |
+| POST | /tts_stream | 流式 TTS |
+| POST | /upload_audio | 上传参考音频 |
+
+### 通用说明
+- **音色指定**：`prompt_speech_path`（文件名或路径）与 `speaker`（名称）二选一必填；未写路径时从 `assets/speakers/` 下按名称查找。
+- **响应**：/tts、/tts_v2 返回 `audio/wav` 二进制；/tts_stream 返回 `application/x-ndjson` 流（每行一个 JSON）。
+"""
+app = FastAPI(title="IndexTTS 2.0 API", version="2.0.0", description=_API_DESCRIPTION)
 
 # 推理锁 - 防止并发推理导致显存溢出
 inference_lock = asyncio.Lock()
@@ -778,57 +803,77 @@ if __name__ == "__main__":
     logger.info("Starting IndexTTS 2.0 API server")
     uvicorn.run(app, host="0.0.0.0", port=8002)
 
-# 示例请求:
 
-# 1. 基础TTS请求（兼容1.0版本）:
-# curl -X POST "http://localhost:8002/tts" \
-#      -H "Content-Type: application/json" \
-#      -d '{"text": "你好，这是IndexTTS 2.0的测试。", "speaker": "Scarlett"}' \
-#      --output output.wav
-
-# 2. 增强版TTS请求（2.0新功能）:
-# curl -X POST "http://localhost:8002/tts_v2" \
-#      -H "Content-Type: application/json" \
-#      -d '{
-#        "text": "哇塞！这个效果太棒了！", 
-#        "speaker": "voice_10",
-#        "emo_control_mode": 2,
-#        "emo_vector": [0, 0, 0, 0, 0, 0, 0.45, 0],
-#        "use_random": false
-#      }' \
-#      --output output_enhanced.wav
-
-# 3. 情感文本控制:
-# curl -X POST "http://localhost:8002/tts_v2" \
-#      -H "Content-Type: application/json" \
-#      -d '{
-#        "text": "快躲起来！他要来了！", 
-#        "speaker": "voice_12",
-#        "emo_control_mode": 3,
-#        "use_emo_text": true,
-#        "emo_text": "恐惧"
-#      }' \
-#      --output output_fear.wav
-
-# 4. 流式TTS请求:
-# curl -X POST "http://localhost:8002/tts_stream" \
-#      -H "Content-Type: application/json" \
-#      -d '{
-#        "text": "这是一段较长的文本，会被分成多个段落进行流式生成。",
-#        "speaker": "voice_01",
-#        "max_segment_length": 50
-#      }'
-
-# 5. 上传音频文件:
-# curl -X POST "http://localhost:8002/upload_audio" \
-#      -F "file=@/path/to/your/audio.wav"
-
-# 6. 获取可用说话人列表:
-# curl -X GET "http://localhost:8002/speakers"
-
-# 7. 查看GPU显存状态:
-# curl -X GET "http://localhost:8002/gpu_status"
-
-# 8. 手动清理CUDA缓存:
-# curl -X POST "http://localhost:8002/clear_cache"
+# =============================================================================
+# API 使用说明（详细）
+# =============================================================================
+#
+# 一、服务启动
+#     python api_server.py
+#     默认: http://localhost:8002 ，交互式文档: http://localhost:8002/docs
+#
+# 二、GET /
+#     返回服务信息及端点列表，无请求体。
+#
+# 三、GET /speakers
+#     获取可用说话人列表（来自 assets/speakers 下的 .wav/.mp3 文件名）。
+#     响应 JSON: { "speakers": ["name1", ...], "count": N, "directory": "..." }
+#
+# 四、POST /tts（基础 TTS，兼容 1.0）
+#     请求体 JSON 必填: text, 以及 prompt_speech_path 或 speaker 二选一。
+#     可选: temperature, top_k, top_p, seed, max_text_tokens_per_sentence,
+#          sentences_bucket_max_size, max_mel_tokens, num_beams, length_penalty, repetition_penalty.
+#     响应: audio/wav 二进制。
+#
+#     示例:
+#     curl -X POST "http://localhost:8002/tts" \\
+#          -H "Content-Type: application/json" \\
+#          -d '{"text": "你好，这是IndexTTS 2.0的测试。", "speaker": "Scarlett"}' \\
+#          --output output.wav
+#
+# 五、POST /tts_v2（增强 TTS，支持情感控制）
+#     必填: text, 以及 prompt_speech_path 或 speaker 二选一。
+#     情感控制: emo_control_mode 取值
+#       0 = 与音色参考相同（默认）
+#       1 = 使用情感参考音频 emo_audio_prompt，可调 emo_alpha
+#       2 = 使用情感向量 emo_vector，8 维 [喜,怒,哀,惧,厌恶,低落,惊喜,平静]，和≤1.5
+#       3 = 使用情感文本 use_emo_text=true, emo_text="恐惧" 等
+#     其它可选: temperature, top_k, top_p, seed, do_sample, max_text_tokens_per_segment,
+#       max_mel_tokens, num_beams, length_penalty, repetition_penalty,
+#       use_random, interval_silence 等。
+#     响应: audio/wav 二进制。
+#
+#     示例（情感向量-平静）:
+#     curl -X POST "http://localhost:8002/tts_v2" \\
+#          -H "Content-Type: application/json" \\
+#          -d '{"text": "哇塞！这个效果太棒了！", "speaker": "voice_10", "emo_control_mode": 2, "emo_vector": [0,0,0,0,0,0,0.45,0]}' \\
+#          --output output_enhanced.wav
+#
+#     示例（情感文本）:
+#     curl -X POST "http://localhost:8002/tts_v2" \\
+#          -H "Content-Type: application/json" \\
+#          -d '{"text": "快躲起来！他要来了！", "speaker": "voice_12", "emo_control_mode": 3, "use_emo_text": true, "emo_text": "恐惧"}' \\
+#          --output output_fear.wav
+#
+# 六、POST /tts_stream（流式 TTS）
+#     请求体同 /tts_v2，额外可选: max_segment_length（默认 100，按句/逗号等分段）。
+#     响应: application/x-ndjson，每行一个 JSON，含 text, audio(采样点列表), sample_rate, segment_index, total_segments；
+#      若某段失败则该行含 "error" 字段。
+#
+#     示例:
+#     curl -X POST "http://localhost:8002/tts_stream" \\
+#          -H "Content-Type: application/json" \\
+#          -d '{"text": "这是一段较长的文本，会被分成多个段落进行流式生成。", "speaker": "voice_01", "max_segment_length": 50}'
+#
+# 七、POST /upload_audio
+#     表单上传: file（WAV 或 MP3）。文件保存到 assets/speakers/，文件名（不含扩展名）可作为 speaker 使用。
+#     响应 JSON: { "status": "success", "message": "...", "file_path": "...", "speaker_name": "..." }
+#
+#     示例:
+#     curl -X POST "http://localhost:8002/upload_audio" -F "file=@/path/to/your/audio.wav"
+#
+# 八、错误码
+#     400: 参数错误（如未提供音色、情感向量格式错误等）
+#     422: 请求体格式错误（JSON 校验失败）
+#     500: 服务端推理或内部错误
 
