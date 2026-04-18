@@ -50,6 +50,8 @@ dependencies = [
   "pandas==2.3.2",
   "python-multipart>=0.0.20",
   "safetensors==0.5.2",
+  "alembic>=1.14,<2",
+  "sqlalchemy>=2.0,<3",
   "sentencepiece>=0.2.1",
   "tensorboard==2.9.1",
   "textstat>=0.7.10",
@@ -87,6 +89,9 @@ indextts = "indextts.cli:main"
 # NOTE: Use `uv tool install -e .` to install the package as a CLI tool.
 requires = ["hatchling >= 1.27.0"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["indextts", "api"]
 
 [tool.uv]
 # Disable build isolation when building DeepSpeed from source.

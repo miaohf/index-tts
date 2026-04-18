@@ -1,0 +1,61 @@
+# Alembic 迁移（音色库 SQLite）
+
+## 命令（在项目根目录执行）
+
+依赖已写入 `pyproject.toml`，请使用虚拟环境中的 CLI，**不要**执行 `python alembic/env.py`。
+
+```bash
+cd /path/to/index-tts
+uv sync   # 或 pip install -e .
+uv run alembic current
+uv run alembic history
+uv run alembic upgrade head
+```
+
+## 数据库 URL
+
+默认与运行时一致：`{项目根}/assets/speakers/voices.db`（可用环境变量覆盖）。
+
+| 变量 | 含义 |
+|------|------|
+| `ALEMBIC_DATABASE_URL` | 完整 SQLAlchemy URL，优先级最高（如 `sqlite:////abs/path/voices.db`） |
+| `INDEX_TTS_VOICE_DATABASE_URL` | 同上，次优先 |
+| `INDEX_TTS_PROMPT_DIR` | 提示音目录相对项目根，默认 `assets/speakers` |
+
+## 已有库（之前靠 `create_all` 建表）
+
+若表已存在，**不要**再 `upgrade`（会报 table already exists）。只需打上版本标记：
+
+```bash
+uv run alembic stamp 38d069d34930
+```
+
+（`38d069d34930` 为当前初始 revision，若以后有变更以 `alembic history` 为准。）
+
+若已处于 `38d069d34930` 且需将 `voices` 升级为「自增 `id` + 唯一 `voice_id`」，请执行：
+
+```bash
+uv run alembic upgrade head
+```
+
+对应迁移：`7f3a9b2c1d4e_voices_add_id_autoincrement_pk.py`。
+
+## 空库 / 新环境
+
+```bash
+uv run alembic upgrade head
+```
+
+与 `api.database.engine` 里的 `create_all` 二选一亦可：`create_all` 对已存在表为 no-op。
+
+## 新建迁移
+
+改 `api/database/models.py` 后：
+
+```bash
+uv run alembic revision --autogenerate -m "describe_change"
+# 检查 alembic/versions 下新生成的文件后
+uv run alembic upgrade head
+```
+
+SQLite 部分变更需 [batch mode](https://alembic.sqlalchemy.org/en/latest/batch.html)，必要时手写 migration。
