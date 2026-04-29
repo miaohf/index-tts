@@ -2,7 +2,7 @@
 IndexTTS 2.0 FastAPI 应用入口。
 
 注意：若直接 `uvicorn api.main:app`，需在此文件最前设置 CUDA 环境变量；
-或从项目根目录的 `api_server.py` 启动（推荐）。
+多 GPU 负载请从项目根目录运行 `python api_server.py --gpus 1|2|3|4`（每卡一进程、端口递增）。
 """
 import os
 
@@ -25,8 +25,9 @@ _API_DESCRIPTION = """
 
 ### 服务启动
 ```bash
-python api_server.py
-# 或: uvicorn api.main:app --host 0.0.0.0 --port 8002
+python api_server.py --gpus 1
+# 四卡各一进程（端口 8002～8005）：python api_server.py --gpus 4
+# 或单进程: uvicorn api.main:app --host 0.0.0.0 --port 8002
 ```
 默认地址: http://localhost:8002  
 交互式文档: http://localhost:8002/docs

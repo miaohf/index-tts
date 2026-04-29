@@ -11,6 +11,7 @@ async def root():
         "endpoints": [
             "/tts - 基础文本转语音（兼容1.0版本）",
             "/tts_v2 - 增强版文本转语音（2.0新功能）",
+            "/v1/audio/speech - OpenAI Speech 兼容接口",
             "/tts_stream - 流式文本转语音",
             "/upload_audio - 上传音频文件",
             "/speakers - 获取可用说话人列表；POST /speakers JSON 仅建元数据",

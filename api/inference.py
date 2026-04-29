@@ -106,6 +106,8 @@ class IndexTTS2Model:
     ):
         logger.info(f"Generating speech for text: {text[:50]}...")
         torch.manual_seed(seed)
+        used_voice_id = speaker
+        used_voice_name = None
 
         try:
             if speaker and not prompt_speech_path:
@@ -123,6 +125,10 @@ class IndexTTS2Model:
                         file_name=os.path.basename(prompt_speech_path),
                         name=speaker,
                     )
+                voice = voice_service.get_voice_by_id(
+                    self.voice_session_factory, self.prompt_dir, speaker
+                )
+                used_voice_name = voice.name if voice else speaker
 
             if not prompt_speech_path:
                 raise ValueError("必须提供prompt_speech_path或speaker参数")
@@ -135,6 +141,21 @@ class IndexTTS2Model:
                     logger.warning(f"Prompt audio file not found: {prompt_speech_path}")
                     raise ValueError(f"提示音频文件不存在: {prompt_speech_path}")
                 logger.info(f"Prompt audio: {prompt_speech_path}")
+                if not used_voice_id:
+                    voice = voice_service.get_voice_by_file_name(
+                        self.voice_session_factory,
+                        self.prompt_dir,
+                        os.path.basename(prompt_speech_path),
+                    )
+                    if voice:
+                        used_voice_id = voice.voice_id
+                        used_voice_name = voice.name
+
+                logger.info(
+                    "Using voice: voice_id=%s, name=%s",
+                    used_voice_id or "unknown",
+                    used_voice_name or used_voice_id or "unknown",
+                )
 
             if emo_control_mode == 1 and emo_audio_prompt:
                 if not os.path.isabs(emo_audio_prompt):
@@ -196,11 +217,11 @@ class IndexTTS2Model:
                 wav_data = (
                     torch.as_tensor(wav_np, dtype=torch.float32).squeeze() / 32768.0
                 ).cpu().numpy()
-                if speaker:
+                if used_voice_id:
                     voice_service.record_voice_usage(
                         self.voice_session_factory,
                         self.prompt_dir,
-                        speaker,
+                        used_voice_id,
                         len(wav_data) / max(sample_rate, 1),
                     )
                 logger.info(f"Generated audio of length: {len(wav_data)/sample_rate:.2f} seconds")

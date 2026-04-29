@@ -1,15 +1,87 @@
 from __future__ import annotations
 
+import io
 import mimetypes
+import subprocess
 from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
 
+import numpy as np
+import soundfile as sf
 from fastapi import Request
 from fastapi.responses import FileResponse
 
 from api.config import public_base_url
 from api.schemas import VoiceInfo
+
+
+def merge_wav_bytes(wav_bytes_list: list[bytes], interval_silence_ms: int = 0) -> bytes:
+    """将多段 WAV bytes 按顺序拼接，可在段间插入静音。"""
+    if not wav_bytes_list:
+        raise ValueError("wav_bytes_list is empty")
+    if len(wav_bytes_list) == 1:
+        return wav_bytes_list[0]
+
+    arrays: list[np.ndarray] = []
+    sample_rate: int | None = None
+
+    for wav_bytes in wav_bytes_list:
+        data, sr = sf.read(io.BytesIO(wav_bytes), dtype="float32")
+        if sample_rate is None:
+            sample_rate = sr
+        arrays.append(data)
+
+    parts: list[np.ndarray] = []
+    silence = (
+        np.zeros(int(sample_rate * interval_silence_ms / 1000), dtype=np.float32)
+        if interval_silence_ms > 0
+        else None
+    )
+    for i, arr in enumerate(arrays):
+        parts.append(arr)
+        if silence is not None and i < len(arrays) - 1:
+            parts.append(silence)
+
+    merged = np.concatenate(parts)
+    out = io.BytesIO()
+    sf.write(out, merged, sample_rate, format="WAV", subtype="PCM_16")
+    return out.getvalue()
+
+
+def encode_audio_bytes(wav_data: np.ndarray, sample_rate: int, response_format: str = "wav") -> tuple[bytes, str]:
+    fmt = response_format.lower()
+    buffer = io.BytesIO()
+    sf.write(buffer, wav_data, sample_rate, format="WAV", subtype="PCM_16")
+    wav_bytes = buffer.getvalue()
+    return transcode_wav_bytes(wav_bytes, response_format=fmt)
+
+
+def transcode_wav_bytes(wav_bytes: bytes, response_format: str = "wav") -> tuple[bytes, str]:
+    fmt = response_format.lower()
+    if fmt == "wav":
+        return wav_bytes, "audio/wav"
+    if fmt == "mp3":
+        return _wav_to_mp3_bytes(wav_bytes), "audio/mpeg"
+    raise ValueError(f"Unsupported response_format: {response_format}")
+
+
+def _wav_to_mp3_bytes(wav_bytes: bytes) -> bytes:
+    """将 WAV bytes 转为 MP3 bytes。依赖系统安装 ffmpeg。"""
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-nostdin", "-loglevel", "error", "-i", "pipe:0", "-f", "mp3", "pipe:1"],
+            input=wav_bytes,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("response_format=mp3 requires ffmpeg installed on server") from exc
+    except subprocess.CalledProcessError as exc:
+        stderr_text = exc.stderr.decode("utf-8", errors="ignore").strip()
+        raise RuntimeError(f"ffmpeg failed to convert wav to mp3: {stderr_text}") from exc
+    return result.stdout
 
 
 def speaker_audio_path(voice_id: str) -> str:

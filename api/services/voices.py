@@ -224,6 +224,26 @@ def get_voice_by_id(
         return _voice_to_info(v, labels, int(usage_count or 0), last_used_at)
 
 
+def get_voice_by_file_name(
+    session_factory: sessionmaker[Session],
+    prompt_dir: str,
+    file_name: str,
+) -> Optional[VoiceInfo]:
+    del prompt_dir
+    with session_factory() as session:
+        row = session.execute(
+            select(Voice, func.coalesce(VoiceStat.request_count, 0), VoiceStat.last_used_at)
+            .outerjoin(VoiceStat, VoiceStat.voice_id == Voice.voice_id)
+            .where(Voice.file_name == file_name)
+            .order_by(Voice.updated_at.desc(), Voice.id.desc())
+        ).first()
+        if row is None:
+            return None
+        v, usage_count, last_used_at = row[0], row[1], row[2]
+        labels = _fetch_voice_labels_map(session, [v.voice_id]).get(v.voice_id, {})
+        return _voice_to_info(v, labels, int(usage_count or 0), last_used_at)
+
+
 def upsert_voice(
     session_factory: sessionmaker[Session],
     prompt_dir: str,

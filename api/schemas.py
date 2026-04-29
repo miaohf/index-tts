@@ -1,10 +1,11 @@
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel
 
 
 class TextToSpeechRequest(BaseModel):
     text: str
+    client_request_id: Optional[str] = None
     prompt_speech_path: Optional[str] = None
     speaker: Optional[str] = None
     temperature: float = 0.8
@@ -21,6 +22,7 @@ class TextToSpeechRequest(BaseModel):
 
 class EnhancedTTSRequest(BaseModel):
     text: str
+    client_request_id: Optional[str] = None
     prompt_speech_path: Optional[str] = None
     speaker: Optional[str] = None
     temperature: float = 0.8
@@ -66,6 +68,13 @@ class StreamTTSRequest(BaseModel):
     interval_silence: int = 200
     emo_control_mode: int = 0
     max_segment_length: int = 100
+
+
+class OpenAISpeechRequest(BaseModel):
+    model: str
+    voice: str
+    input: str
+    response_format: Literal["wav", "mp3"] = "wav"
 
 
 class VoiceInfo(BaseModel):

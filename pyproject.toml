@@ -49,6 +49,7 @@ dependencies = [
   "opencv-python==4.9.0.80",
   "pandas==2.3.2",
   "python-multipart>=0.0.20",
+  "redis>=5.2.1",
   "safetensors==0.5.2",
   "alembic>=1.14,<2",
   "sqlalchemy>=2.0,<3",

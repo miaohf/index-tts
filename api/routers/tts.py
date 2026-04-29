@@ -1,14 +1,13 @@
-import io
 import json
 import logging
 
-import soundfile as sf
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
 from api.inference import model
-from api.schemas import EnhancedTTSRequest, StreamTTSRequest, TextToSpeechRequest
+from api.schemas import EnhancedTTSRequest, OpenAISpeechRequest, StreamTTSRequest, TextToSpeechRequest
 from api.text_segment import split_text
+from api.utils.audio import encode_audio_bytes
 
 logger = logging.getLogger("indextts2-api")
 
@@ -51,10 +50,8 @@ async def generate_speech_v1(request: Request):
             logger.error(f"Speech generation error: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Error generating speech: {str(e)}")
 
-        buffer = io.BytesIO()
-        sf.write(buffer, wav_data, sample_rate, format="wav")
-        buffer.seek(0)
-        return Response(content=buffer.read(), media_type="audio/wav")
+        audio_bytes, media_type = encode_audio_bytes(wav_data, sample_rate, response_format="wav")
+        return Response(content=audio_bytes, media_type=media_type)
     except HTTPException:
         raise
     except Exception as e:
@@ -105,10 +102,8 @@ async def generate_speech_v2(request: Request):
             logger.error(f"Speech generation error: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Error generating speech: {str(e)}")
 
-        buffer = io.BytesIO()
-        sf.write(buffer, wav_data, sample_rate, format="wav")
-        buffer.seek(0)
-        return Response(content=buffer.read(), media_type="audio/wav")
+        audio_bytes, media_type = encode_audio_bytes(wav_data, sample_rate, response_format="wav")
+        return Response(content=audio_bytes, media_type=media_type)
     except HTTPException:
         raise
     except Exception as e:
@@ -178,4 +173,37 @@ async def stream_tts(request: Request):
         raise
     except Exception as e:
         logger.error(f"Unexpected error in /tts_stream endpoint: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/v1/audio/speech")
+async def openai_audio_speech(request: Request):
+    try:
+        body = await request.json()
+        logger.info(f"Received /v1/audio/speech request: {body}")
+        try:
+            req = OpenAISpeechRequest(**body)
+        except Exception as e:
+            raise HTTPException(status_code=422, detail=f"Invalid request format: {str(e)}")
+
+        try:
+            wav_data, sample_rate = model.generate_speech(
+                text=req.input,
+                speaker=req.voice,
+                emo_control_mode=0,
+            )
+            audio_bytes, media_type = encode_audio_bytes(wav_data, sample_rate, response_format=req.response_format)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except RuntimeError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+        except Exception as e:
+            logger.error(f"Speech generation error: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Error generating speech: {str(e)}")
+
+        return Response(content=audio_bytes, media_type=media_type)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in /v1/audio/speech endpoint: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
