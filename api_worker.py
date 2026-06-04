@@ -11,6 +11,7 @@ from typing import Any
 
 import soundfile as sf
 
+from api.logging_setup import configure_logging
 from api.redis_queue import (
     audio_key,
     decode_job_message,
@@ -128,10 +129,7 @@ def main() -> None:
     parser.add_argument("--brpop-timeout", type=int, default=5)
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
+    configure_logging()
     _install_signal_handlers()
     os.chdir(ROOT)
 

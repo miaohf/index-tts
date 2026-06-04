@@ -63,25 +63,39 @@ def transcode_wav_bytes(wav_bytes: bytes, response_format: str = "wav") -> tuple
         return wav_bytes, "audio/wav"
     if fmt == "mp3":
         return _wav_to_mp3_bytes(wav_bytes), "audio/mpeg"
+    if fmt == "opus":
+        return _wav_to_opus_bytes(wav_bytes), "audio/opus"
     raise ValueError(f"Unsupported response_format: {response_format}")
 
 
-def _wav_to_mp3_bytes(wav_bytes: bytes) -> bytes:
-    """将 WAV bytes 转为 MP3 bytes。依赖系统安装 ffmpeg。"""
+def _wav_to_ffmpeg_output(wav_bytes: bytes, output_args: list[str], *, format_name: str) -> bytes:
     try:
         result = subprocess.run(
-            ["ffmpeg", "-nostdin", "-loglevel", "error", "-i", "pipe:0", "-f", "mp3", "pipe:1"],
+            ["ffmpeg", "-nostdin", "-loglevel", "error", "-i", "pipe:0", *output_args, "pipe:1"],
             input=wav_bytes,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=True,
         )
     except FileNotFoundError as exc:
-        raise RuntimeError("response_format=mp3 requires ffmpeg installed on server") from exc
+        raise RuntimeError(f"response_format={format_name} requires ffmpeg installed on server") from exc
     except subprocess.CalledProcessError as exc:
         stderr_text = exc.stderr.decode("utf-8", errors="ignore").strip()
-        raise RuntimeError(f"ffmpeg failed to convert wav to mp3: {stderr_text}") from exc
+        raise RuntimeError(f"ffmpeg failed to convert wav to {format_name}: {stderr_text}") from exc
     return result.stdout
+
+
+def _wav_to_mp3_bytes(wav_bytes: bytes) -> bytes:
+    return _wav_to_ffmpeg_output(wav_bytes, ["-f", "mp3"], format_name="mp3")
+
+
+def _wav_to_opus_bytes(wav_bytes: bytes) -> bytes:
+    """WAV → Ogg Opus（对齐 OpenAI response_format=opus）。"""
+    return _wav_to_ffmpeg_output(
+        wav_bytes,
+        ["-c:a", "libopus", "-f", "ogg"],
+        format_name="opus",
+    )
 
 
 def speaker_audio_path(voice_id: str) -> str:

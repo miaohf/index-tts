@@ -6,6 +6,7 @@ import re
 from typing import List, Union, overload
 import warnings
 from indextts.utils.common import tokenize_by_CJK_char, de_tokenized_by_CJK_char
+from indextts.utils.logging_utils import suppress_wetext_normalizer_logs
 from sentencepiece import SentencePieceProcessor
 
 
@@ -118,11 +119,13 @@ class TextNormalizer:
         import platform
         if self.zh_normalizer is not None and self.en_normalizer is not None:
             return
+        suppress_wetext_normalizer_logs()
         if platform.system() != "Linux":  # Mac and Windows
             from wetext import Normalizer
 
             self.zh_normalizer = Normalizer(remove_erhua=False, lang="zh", operator="tn")
             self.en_normalizer = Normalizer(lang="en", operator="tn")
+
         else:
             from tn.chinese.normalizer import Normalizer as NormalizerZh
             from tn.english.normalizer import Normalizer as NormalizerEn

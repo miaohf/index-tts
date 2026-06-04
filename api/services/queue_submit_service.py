@@ -37,11 +37,25 @@ logger = logging.getLogger("indextts2-api")
 
 WAIT_POLL_INTERVAL_SECONDS = 0.2
 DEFAULT_WAIT_TIMEOUT_SECONDS = 180
+MAX_WAIT_TIMEOUT_SECONDS = 1800
 
-# 超过此字符数时触发多 GPU 分段并发；0 表示禁用
-AUTO_SPLIT_THRESHOLD = int(os.getenv("INDEX_TTS_AUTO_SPLIT_THRESHOLD", "150"))
-# 每段最大字符数
-AUTO_SPLIT_SEGMENT_LENGTH = int(os.getenv("INDEX_TTS_AUTO_SPLIT_SEGMENT_LENGTH", "100"))
+
+def _sync_wait_timeout_exceeded(request_id: str, wait_timeout_seconds: int, status: str, **extra: Any) -> None:
+    detail: dict[str, Any] = {
+        "request_id": request_id,
+        "status": status,
+        "message": (
+            f"合成在 {wait_timeout_seconds}s 内未完成，请增大 POST 查询参数 wait_timeout_seconds（最大 {MAX_WAIT_TIMEOUT_SECONDS}）后重试"
+        ),
+    }
+    detail.update(extra)
+    raise HTTPException(status_code=504, detail=detail)
+
+
+# 超过此字符数时触发多 GPU 分段并发；0 表示禁用。默认只拆真正的长文本，避免普通句子被切开。
+AUTO_SPLIT_THRESHOLD = int(os.getenv("INDEX_TTS_AUTO_SPLIT_THRESHOLD", "1200"))
+# 每段目标最大字符数。实际分段会为避免极短尾段而允许少量超出。
+AUTO_SPLIT_SEGMENT_LENGTH = int(os.getenv("INDEX_TTS_AUTO_SPLIT_SEGMENT_LENGTH", "1000"))
 
 
 def to_payload(model: Any) -> dict[str, Any]:
@@ -82,11 +96,12 @@ def _try_reserve_client_request_id(client: Any, client_req_id: str, request_id: 
     return True, request_id
 
 
-def _build_replay_response(
+async def _build_replay_response(
     client: Any,
     request_id: str,
     request_type: str,
     payload_fingerprint: str,
+    wait_timeout_seconds: int,
 ) -> Response:
     info = _get_request_info(client, request_id=request_id)
     if not info:
@@ -118,14 +133,10 @@ def _build_replay_response(
         error = info.get("error", "unknown error")
         raise HTTPException(status_code=500, detail=f"TTS 任务失败: {error}")
 
-    detail: dict[str, Any] = {
-        "request_id": request_id,
-        "status": status,
-        "message": "检测到 client_request_id 重试，复用已有请求，请改为查询 /requests/{request_id}",
-    }
-    if info.get("client_request_id"):
-        detail["client_request_id"] = info["client_request_id"]
-    raise HTTPException(status_code=202, detail=detail)
+    from api.services.queue_query_service import wait_for_request_audio_content
+
+    audio = await wait_for_request_audio_content(request_id, wait_timeout_seconds)
+    return Response(content=audio, media_type="audio/wav")
 
 
 def _count_active_requests(client: Any) -> int:
@@ -226,11 +237,12 @@ async def enqueue_and_wait(
             if not _get_request_info(client, request_id=mapped_request_id):
                 client.delete(map_key)
             else:
-                return _build_replay_response(
+                return await _build_replay_response(
                     client=client,
                     request_id=mapped_request_id,
                     request_type=request_type,
                     payload_fingerprint=payload_fingerprint,
+                    wait_timeout_seconds=wait_timeout_seconds,
                 )
     _ensure_request_capacity(client)
     q_name = queue_name()
@@ -244,11 +256,12 @@ async def enqueue_and_wait(
         client_req_id=client_request_id,
     )
     if client_request_id and not is_new_request:
-        return _build_replay_response(
+        return await _build_replay_response(
             client=client,
             request_id=request_id,
             request_type=request_type,
             payload_fingerprint=payload_fingerprint,
+            wait_timeout_seconds=wait_timeout_seconds,
         )
     job_id = new_job_id()
     j_key = job_key(job_id)
@@ -304,16 +317,11 @@ async def enqueue_and_wait(
             raise HTTPException(status_code=500, detail=f"TTS 任务失败: {error}")
         await asyncio.sleep(WAIT_POLL_INTERVAL_SECONDS)
 
-    _mark_request_status(client, r_key=r_key, status=QueueStatus.QUEUED, job_id=job_id)
-    client.expire(r_key, ttl)
-    raise HTTPException(
-        status_code=202,
-        detail={
-            "request_id": request_id,
-            "status": QueueStatus.QUEUED.value,
-            "message": "任务已入队，等待超时，请调用 /requests/{request_id} 查询状态",
-        },
-    )
+    info_raw = client.hgetall(j_key)
+    status = QueueStatus.UNKNOWN.value
+    if info_raw:
+        status = hash_to_text_map(info_raw).get("status", status)
+    _sync_wait_timeout_exceeded(request_id, wait_timeout_seconds, status)
 
 
 async def enqueue_group_and_wait(
@@ -333,11 +341,12 @@ async def enqueue_group_and_wait(
             if not _get_request_info(client, request_id=mapped_request_id):
                 client.delete(map_key)
             else:
-                return _build_replay_response(
+                return await _build_replay_response(
                     client=client,
                     request_id=mapped_request_id,
                     request_type=request_type,
                     payload_fingerprint=payload_fingerprint,
+                    wait_timeout_seconds=wait_timeout_seconds,
                 )
     _ensure_request_capacity(client)
     q_name = queue_name()
@@ -352,11 +361,12 @@ async def enqueue_group_and_wait(
         client_req_id=client_request_id,
     )
     if client_request_id and not is_new_request:
-        return _build_replay_response(
+        return await _build_replay_response(
             client=client,
             request_id=request_id,
             request_type=request_type,
             payload_fingerprint=payload_fingerprint,
+            wait_timeout_seconds=wait_timeout_seconds,
         )
     group_id = new_job_id()
     ts = str(now_ts())
@@ -402,6 +412,7 @@ async def enqueue_group_and_wait(
         mapping={
             "status": QueueStatus.PROCESSING.value,
             "request_id": request_id,
+            "interval_silence_ms": str(interval_silence_ms),
             "total": str(needed),
             "done_count": "0",
             "job_ids": ",".join(sub_job_ids),
@@ -485,17 +496,15 @@ async def enqueue_group_and_wait(
         client.hset(g_key, mapping={"done_count": str(done_count), "updated_at": str(now_ts())})
         await asyncio.sleep(WAIT_POLL_INTERVAL_SECONDS)
 
-    client.hset(g_key, mapping={"status": QueueStatus.QUEUED.value, "updated_at": str(now_ts())})
-    _mark_request_status(client, r_key=r_key, status=QueueStatus.QUEUED, group_id=group_id)
-    client.expire(r_key, ttl)
-    raise HTTPException(
-        status_code=202,
-        detail={
-            "request_id": request_id,
-            "job_ids": sub_job_ids,
-            "total_segments": needed,
-            "status": QueueStatus.QUEUED.value,
-            "message": "长文本已分段入队，等待超时。请用 GET /requests/{request_id} 查询状态，完成后 GET /requests/{request_id}/audio 取音频",
-        },
+    g_raw = client.hgetall(g_key)
+    group_status = QueueStatus.UNKNOWN.value
+    if g_raw:
+        group_status = hash_to_text_map(g_raw).get("status", group_status)
+    _sync_wait_timeout_exceeded(
+        request_id,
+        wait_timeout_seconds,
+        group_status,
+        job_ids=sub_job_ids,
+        total_segments=needed,
     )
 

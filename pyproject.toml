@@ -65,6 +65,7 @@ dependencies = [
   "uvicorn>=0.35.0",
   "wetext>=0.0.9; sys_platform != 'linux'",
   "WeTextProcessing; sys_platform == 'linux'",
+  "gradio>=5.45.0",
 ]
 
 [project.optional-dependencies]

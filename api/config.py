@@ -48,6 +48,56 @@ def public_base_url() -> str | None:
     v = os.environ.get("INDEX_TTS_PUBLIC_BASE_URL", "").strip()
     return v or None
 
+def max_upload_bytes() -> int:
+    """参考音频上传大小上限（字节），默认 50 MiB；可用 INDEX_TTS_MAX_UPLOAD_BYTES 覆盖。"""
+    default = 50 * 1024 * 1024
+    raw = os.environ.get("INDEX_TTS_MAX_UPLOAD_BYTES", "").strip()
+    if not raw:
+        return default
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return default
+
+
+def resolve_ephemeral_dir() -> str:
+    """临时参考音目录（不入库），默认 assets/ephemeral。"""
+    relative = os.environ.get("INDEX_TTS_EPHEMERAL_DIR", "assets/ephemeral")
+    if os.path.isabs(relative):
+        base = relative
+    else:
+        base = os.path.join(project_root(), relative)
+    return os.path.abspath(base)
+
+
+def ephemeral_ttl_seconds() -> int:
+    """临时 session 生命周期（秒），默认 24h；INDEX_TTS_EPHEMERAL_TTL_SECONDS。"""
+    default = 86400
+    raw = os.environ.get("INDEX_TTS_EPHEMERAL_TTL_SECONDS", "").strip()
+    if not raw:
+        return default
+    try:
+        return max(60, int(raw))
+    except ValueError:
+        return default
+
+
+def ephemeral_cleanup_interval_seconds() -> int:
+    """过期 session 扫描间隔（秒），默认 300；INDEX_TTS_EPHEMERAL_CLEANUP_INTERVAL_SECONDS。"""
+    default = 300
+    raw = os.environ.get("INDEX_TTS_EPHEMERAL_CLEANUP_INTERVAL_SECONDS", "").strip()
+    if not raw:
+        return default
+    try:
+        return max(30, int(raw))
+    except ValueError:
+        return default
+
+
+SESSION_META_FILENAME = ".session.json"
+EPHEMERAL_REF_PREFIX = "ephemeral/"
+
+
 VOICE_SORT_FIELDS = {
     "voice_id": "voice_id",
     "name": "name",
@@ -55,5 +105,7 @@ VOICE_SORT_FIELDS = {
     "gender": "gender",
     "created_at": "created_at",
     "updated_at": "updated_at",
-    "usage_count": "usage_count",
+    "request_count": "request_count",
+    "total_audio_seconds": "total_audio_seconds",
+    "last_used_at": "last_used_at",
 }

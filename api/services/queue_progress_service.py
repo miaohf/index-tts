@@ -11,6 +11,7 @@ from api.redis_queue import (
     queue_name,
     request_queue_name,
 )
+from api.services.queue_query_service import refresh_request_state_by_id
 from api.services.queue_submit_service import AUTO_SPLIT_SEGMENT_LENGTH, AUTO_SPLIT_THRESHOLD
 from api.services.queue_status import QueueStatus
 
@@ -28,6 +29,7 @@ def get_queue_status() -> dict[str, int | str]:
     client = get_redis_client()
     q_name = queue_name()
     rq_name = request_queue_name()
+    _reconcile_request_queue(client, rq_name)
     request_cap = max_request_size()
     request_status_counts = _collect_request_status_counts(client)
     return {
@@ -66,6 +68,7 @@ def get_queue_progress(include_groups: bool, max_group_items: int) -> dict[str, 
     client = get_redis_client()
     q_name = queue_name()
     rq_name = request_queue_name()
+    _reconcile_request_queue(client, rq_name)
     request_cap = max_request_size()
     request_status_counts = _collect_request_status_counts(client)
 
@@ -199,4 +202,19 @@ def get_queue_progress(include_groups: bool, max_group_items: int) -> dict[str, 
     payload["group_status_counts"] = dict(group_status_counter)
     payload["groups"] = groups[:max_group_items]
     return payload
+
+
+def _reconcile_request_queue(client: Any, rq_name: str) -> None:
+    request_ids = [rid.decode("utf-8") for rid in client.zrange(rq_name, 0, -1)]
+    stale_ids: list[str] = []
+    for request_id in request_ids:
+        info = refresh_request_state_by_id(client, request_id)
+        if not info:
+            stale_ids.append(request_id)
+            continue
+        status = info.get("status")
+        if status not in {QueueStatus.QUEUED.value, QueueStatus.PROCESSING.value}:
+            stale_ids.append(request_id)
+    if stale_ids:
+        client.zrem(rq_name, *stale_ids)
 

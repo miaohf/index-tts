@@ -10,7 +10,7 @@ OpenAPI 交互文档：服务启动后访问 `{base}/docs`（Swagger UI）。
 
 | 方式 | 入口应用 | 说明 |
 |------|----------|------|
-| **队列模式（推荐生产）** | `api.gateway_main:app` | 由 `python api_server.py` 拉起：**1 个网关** + **N 个 GPU Worker** + **Redis 队列**。网关**不加载**推理模型；`/tts`、`/tts_v2` **先入队**再合成。 |
+| **队列模式（推荐生产）** | `api.gateway_main:app` | 由 `python api_server.py` 拉起：**1 个网关** + **N 个 GPU Worker** + **Redis 队列**。对外 TTS 仅 **`POST /v1/audio/speech`**（OpenAI 兼容）。 |
 | **单体模式（兼容/开发）** | `api.main:app` | `uvicorn api.main:app`：单进程内直接加载模型，**同步**返回 WAV；并包含 **`/speakers`、`/upload_audio`、`/tts_stream`** 等完整路由。 |
 
 默认基址：`http://localhost:8002`（下文记为 `{base}`）。若你同时开两个进程（例如网关 8002、单体 8003），请各自替换 `{base}`。
@@ -29,7 +29,7 @@ python api_server.py --gpus 4 --host 0.0.0.0 --port 8002 \
   --redis-url redis://127.0.0.1:6379/0 \
   --queue-name indextts:tts:jobs \
   --request-queue-name indextts:tts:requests \
-  --job-ttl-seconds 1800 \
+  --job-ttl-seconds 43200 \
   --max-request-size 200
 ```
 
@@ -51,7 +51,7 @@ python api_server.py --gpus 4 --host 0.0.0.0 --port 8002 \
 | `INDEX_TTS_REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis 连接串 |
 | `INDEX_TTS_QUEUE_NAME` | `indextts:tts:jobs` | 任务队列名（Redis List） |
 | `INDEX_TTS_REQUEST_QUEUE_NAME` | `indextts:tts:requests` | 请求队列名（Redis ZSet） |
-| `INDEX_TTS_JOB_TTL_SECONDS` | `1800` | 任务状态与合成结果在 Redis 中的保留秒数 |
+| `INDEX_TTS_JOB_TTL_SECONDS` | `43200`（12 小时） | 任务状态与合成结果在 Redis 中的保留秒数；批量或长排队场景可再调大 |
 | `INDEX_TTS_MAX_REQUEST_SIZE` | `200` | 最大活跃请求数（统计 queued/processing 请求） |
 | `INDEX_TTS_MAX_QUEUE_SIZE` | `200` | 兼容旧变量；未设置 `INDEX_TTS_MAX_REQUEST_SIZE` 时回退使用 |
 
@@ -63,7 +63,7 @@ uv run uvicorn api.gateway_main:app --host 0.0.0.0 --port 8002
 CUDA_VISIBLE_DEVICES=0 uv run python api_worker.py --gpu-id 0 --redis-url redis://127.0.0.1:6379/0
 ```
 
-**说明**：队列模式下 **没有** `/speakers`、`/upload_audio`、`/tts_stream`；音色管理与上传需使用 **单体模式** 另起服务，或后续在网关侧合并路由。
+**说明**：队列模式下网关提供 **`GET/POST/PUT/DELETE /speakers`**、**`PATCH/PUT/DELETE /speakers/{voice_id}`**、**`POST /upload_audio`**（持久音色入库）、**`POST /ref-audio/upload`**（临时参考音，不入库，TTL 清理）；**`POST /tts_stream`** 仍仅 **单体模式** 可用。
 
 ### 单体模式（单进程含模型 + 全路由）
 
@@ -112,18 +112,20 @@ uv run alembic current         # 查看当前版本
 
 以下字段**二选一必填**（若都缺省则返回 400）：
 
-- **`prompt_speech_path`**：参考音频文件名或路径；非绝对路径时按 `assets/speakers/` 下的文件名解析。
-- **`speaker`**：音色 ID（即 `voice_id`），在目录或数据库中解析对应文件。
+- **`prompt_speech_path`**：参考音频路径。支持：
+  - 持久音色：`file.wav` 或 `speakers/file.wav`（相对 `assets/speakers/`）
+  - 临时分片：`ephemeral/{session_id}/{filename}`（相对 `assets/ephemeral/`，不入库）
+- **`speaker`**：音色 ID（即 `voice_id`），须在 SQLite 音色库中注册。
 
 ### TTS 幂等重试（`client_request_id`）
 
-`/tts` 与 `/tts_v2` 请求体支持可选字段 **`client_request_id`**（建议由客户端为每条业务请求生成唯一值）。
+队列网关 **`POST /v1/audio/speech`** 当前不暴露 `client_request_id`（每次请求独立入队）。单体模式 `/tts_v2` 仍支持该字段。
 
 - 同一 `client_request_id` + 同一请求参数重复提交时，服务端会**复用已有请求**，不再重复入队。
 - 若同一 `client_request_id` 但请求参数不同，返回 `409`（冲突）。
 - 对于重试请求：
   - 若已有请求已完成，接口可直接返回历史音频；
-  - 若仍在队列中，返回 `202` 并带已有 `request_id`（客户端统一查询 `/requests/{request_id}`）。
+  - 若仍在队列中，同一 POST **继续阻塞等待**直至 `200` + WAV 或 `504`。
 - **未带 `client_request_id` 时**：每次 `POST` 都是一次新的业务提交，会生成**新的** `request_id`，与是否使用相同 `text` 无关。
 
 ### 队列网关：curl 与 JSON 注意事项
@@ -132,14 +134,14 @@ uv run alembic current         # 查看当前版本
   - 换行请写成 **`\n`**；或把合法 JSON 写入文件，使用 **`curl -H "Content-Type: application/json" -d @body.json`**（长文本推荐）。
 - **响应体可能是 WAV，也可能是 JSON**：
   - **`200`** + `Content-Type: audio/wav`：在 `wait_timeout_seconds` 内已合成完成，**响应体为二进制**，不要用 `python -m json.tool` 解析。
-  - **`202`** + JSON：等待超时或仍在排队，**`detail` 中含 `request_id`**，再轮询 `GET /requests/{request_id}`。
+  - **`504`**：在 `wait_timeout_seconds` 内未完成；增大该参数后**重试同一 POST**（无 `202`、无需二次请求）。
 - 用 **`| head -c N`** 截断输出时，若响应为 WAV，`head` 会提前关闭管道，可能出现 **`curl: (23) Failure writing output to destination`**，属管道问题而非服务端错误。调试时请 **`curl -o out.wav`** 或先看响应头 **`Content-Type`**。
 
 ### 内容类型
 
 | 接口 | Content-Type |
 |------|----------------|
-| `/tts`、`/tts_v2`、`/v1/audio/speech`、`/tts_stream`、`POST /speakers`、`PATCH /speakers/{voice_id}` | `application/json` |
+| `/v1/audio/speech`、`/tts_stream`（单体）、`POST /speakers`、`PATCH /speakers/{voice_id}` | `application/json` |
 | `/upload_audio` | `multipart/form-data`（**必须**包含 `source_file` 及 `voice_id`、`name`、`description`、`language`、`gender`） |
 
 仅录入元数据、不上传文件时，请使用 **`POST /speakers`**（JSON），不要使用无文件的 `multipart` 调用 `/upload_audio`。
@@ -153,15 +155,22 @@ uv run alembic current         # 查看当前版本
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/` | 网关信息与端点列表 |
+| GET | `/speakers` | 音色列表（筛选、排序、分页；含 `audio_url`） |
+| POST | `/speakers` | 创建音色元数据（JSON） |
+| PUT | `/speakers` | 创建或更新音色元数据（JSON，等同 upsert） |
+| DELETE | `/speakers` | 删除音色（查询参数 `voice_id`，可选 `remove_file=true`） |
+| PATCH | `/speakers/{voice_id}` | 更新音色元数据 |
+| PUT | `/speakers/{voice_id}` | 更新音色元数据（同 PATCH） |
+| DELETE | `/speakers/{voice_id}` | 删除音色（可选 `remove_file=true`） |
+| GET | `/speakers/{voice_id}/audio` | 试听/下载参考原音频 |
+| POST | `/upload_audio` | 上传参考音频并写入音色库 |
+| POST | `/ref-audio/upload` | 上传临时参考音（视频翻译，不入库） |
 | POST | `/v1/audio/speech` | OpenAI Speech 兼容接口（`model/voice/input/response_format`） |
-| POST | `/tts` | 基础 TTS：入 Redis 队列；长文本自动分段并发 |
-| POST | `/tts_v2` | 增强 TTS：同上（**推荐**） |
-| GET | `/jobs/{job_id}` | 查询单任务状态 |
+| GET | `/jobs/{job_id}` | 查询单任务状态（运维） |
 | GET | `/jobs/{job_id}/audio` | 单任务完成后取 WAV |
 | GET | `/jobs/group/{group_id}` | 查询分段组整体状态（含各子任务进度） |
 | GET | `/jobs/group/{group_id}/audio` | 分段组全部完成后取**合并** WAV |
-| GET | `/requests/{request_id}` | 统一查询请求状态（推荐客户端使用） |
-| GET | `/requests/{request_id}/audio` | 请求完成后统一取音频（推荐客户端使用） |
+| GET | `/requests/{request_id}/audio` | 按 `request_id` 同步取音频（**备用**；常规仅 `POST` 阻塞等待） |
 | GET | `/queue/status` | 当前队列深度、请求容量与自动分段参数 |
 | GET | `/queue/progress` | 队列进度聚合视图（任务状态计数、processing 按 GPU 分布、可选分段组摘要） |
 
@@ -173,13 +182,13 @@ uv run alembic current         # 查看当前版本
 
 ```bash
 # 队列深度/容量
-curl -s "{base}/queue/status" | jq
+curl -s "${base}/queue/status" | jq
 
 # 任务状态聚合（queued/processing/done/failed 统计 + 分段组摘要）
-curl -s "{base}/queue/progress?include_groups=true&max_group_items=20" | jq
+curl -s "${base}/queue/progress?include_groups=true&max_group_items=20" | jq
 
 # 查询单任务状态
-curl -s "{base}/jobs/<job_id>" | jq
+curl -s "${base}/jobs/<job_id>" | jq
 ```
 
 **Redis 直查（不依赖网关进程）**
@@ -198,6 +207,27 @@ redis-cli -u "$INDEX_TTS_REDIS_URL" HGETALL "indextts:tts:job:<job_id>"
 redis-cli -u "$INDEX_TTS_REDIS_URL" ZCARD "${INDEX_TTS_REQUEST_QUEUE_NAME:-indextts:tts:requests}"
 ```
 
+**Redis 健康检测（快速排障）**
+
+```bash
+# 1) 进程与监听端口（本机默认 6379）
+ss -ltnp | grep 6379
+
+# 2) 本机可达性（应返回 PONG）
+redis-cli -h 127.0.0.1 -p 6379 ping
+
+# 3) 若使用 redis-url，直接按 URL 探活（推荐）
+redis-cli -u "${INDEX_TTS_REDIS_URL:-redis://127.0.0.1:6379/0}" ping
+
+# 4) 服务端基础自检（可选）
+redis-cli -u "${INDEX_TTS_REDIS_URL:-redis://127.0.0.1:6379/0}" INFO server | head -n 20
+```
+
+判定建议：
+- `PONG` 且 `GET /queue/status` 返回 `200`：Redis 与网关连通正常。
+- 出现 `Connection refused`：Redis 未启动、未监听目标地址，或 `--redis-url` 指向错误地址/端口。
+- 本机 `redis-cli ping` 正常但网关仍报错：优先检查网关启动参数 `--redis-url` 与环境变量 `INDEX_TTS_REDIS_URL` 是否一致。
+
 ### 单体 API（`api.main` / `uvicorn api.main:app`）
 
 | 方法 | 路径 | 说明 |
@@ -212,6 +242,7 @@ redis-cli -u "$INDEX_TTS_REDIS_URL" ZCARD "${INDEX_TTS_REQUEST_QUEUE_NAME:-index
 | POST | `/v1/audio/speech` | OpenAI Speech 兼容接口（`model/voice/input/response_format`） |
 | POST | `/tts_stream` | 流式 TTS（NDJSON） |
 | POST | `/upload_audio` | 上传参考音频并写入音色库 |
+| POST | `/ref-audio/upload` | 上传临时参考音（视频翻译，不入库） |
 
 ---
 
@@ -224,9 +255,9 @@ redis-cli -u "$INDEX_TTS_REDIS_URL" ZCARD "${INDEX_TTS_REQUEST_QUEUE_NAME:-index
 
 ## GET `/speakers`
 
-**适用**：仅 **单体模式**（`api.main`）。队列网关无此路由。
+**适用**：**队列网关**与 **单体模式**（`api.main`）。队列网关不加载推理模型，仅访问 SQLite 音色库与磁盘参考音频。
 
-返回音色分页列表，并与磁盘上的 `wav`/`mp3` 做一次同步（扫描目录写入/更新库）。
+返回音色分页列表（仅读取 SQLite 音色库，不会扫描磁盘自动导入）。
 
 ### 查询参数
 
@@ -284,7 +315,7 @@ redis-cli -u "$INDEX_TTS_REDIS_URL" ZCARD "${INDEX_TTS_REQUEST_QUEUE_NAME:-index
 
 ## POST `/speakers`
 
-**适用**：仅 **单体模式**（`api.main`）。
+**适用**：**队列网关**与 **单体模式**（`api.main`）。
 
 仅写入数据库中的音色元数据，**不要求**磁盘上已存在音频文件。未指定 `file_name` 时，默认 `file_name = "{voice_id}.wav"`，之后可用 **`POST /upload_audio`** 上传音频（表单中指定同一 `voice_id`，磁盘上会保存为 `{voice_id}.wav` 或 `{voice_id}.mp3`）补齐。
 
@@ -336,7 +367,7 @@ redis-cli -u "$INDEX_TTS_REDIS_URL" ZCARD "${INDEX_TTS_REQUEST_QUEUE_NAME:-index
 
 ## GET `/speakers/{voice_id}/audio`
 
-**适用**：仅 **单体模式**（`api.main`）。
+**适用**：**队列网关**与 **单体模式**（`api.main`）。
 
 根据 **`voice_id`** 查库读取 **`file_name`**，在提示音目录下返回对应磁盘文件（**原文件**）。`Content-Disposition` 为 `inline`，便于浏览器试听。路径中**不包含** `file_name`，避免与 REST 路由冲突；实际文件名以库字段为准。
 
@@ -348,9 +379,11 @@ redis-cli -u "$INDEX_TTS_REDIS_URL" ZCARD "${INDEX_TTS_REQUEST_QUEUE_NAME:-index
 
 ## POST `/upload_audio`
 
-**适用**：仅 **单体模式**（`api.main`）。
+**适用**：**队列网关**与 **单体模式**（`api.main`）。
 
-将 `wav` 或 `mp3` 保存到提示音目录，并 upsert 音色记录。磁盘文件名固定为 **`{voice_id}` + 上传文件的扩展名**（例如 `voice_id=my_speaker` 且上传 `x.mp3` 则保存为 `my_speaker.mp3`）。
+将 `wav` 或 `mp3` 保存到提示音目录，并 upsert 音色记录。磁盘文件名固定为 **`{voice_id}` + 上传文件的扩展名**（例如 `voice_id=my_speaker` 且上传 `x.mp3` 则保存为 `my_speaker.mp3`）。若同一 `voice_id` 更换扩展名重新上传，旧扩展名文件会自动删除。
+
+单文件大小默认上限 **50 MiB**（环境变量 `INDEX_TTS_MAX_UPLOAD_BYTES` 可覆盖）。
 
 **Content-Type**：`multipart/form-data`
 
@@ -375,12 +408,56 @@ redis-cli -u "$INDEX_TTS_REDIS_URL" ZCARD "${INDEX_TTS_REQUEST_QUEUE_NAME:-index
   "status": "success",
   "message": "音频文件上传成功",
   "file_path": "/path/to/assets/speakers/xxx.mp3",
-  "speaker_name": "xxx",
+  "speaker_name": "我的音色",
   "voice_id": "xxx"
 }
 ```
 
-缺少必填字段或未上传 `source_file` 时返回 **`422`**（校验）或 **`400`**；仅录入元数据请使用 `POST /speakers`（JSON）。
+`speaker_name` 为写入 SQLite 后的 **`voices.name`**（显示名称），与 `voice_id` 可不同。
+
+缺少必填字段或未上传 `source_file` 时返回 **`422`**（校验）或 **`400`**；文件过大返回 **`413`**；仅录入元数据请使用 `POST /speakers`（JSON）。
+
+---
+
+## POST `/ref-audio/upload`
+
+**适用**：**队列网关**（视频翻译等一次性参考音场景）。
+
+将分片参考音保存到 **`assets/ephemeral/{session_id}/`**，**不入 SQLite**。
+
+**Content-Type**：`multipart/form-data`
+
+| 表单字段 | 类型 | 必填 | 说明 |
+|----------|------|------|------|
+| `source_file` | file | 是 | 仅支持 `.wav` / `.mp3` |
+| `session_id` | string | 是 | 会话 ID，通常为 `video_id` |
+| `segment_id` | string | 否 | 分片文件名；省略时使用上传文件原始名（如 `8efb100a_0000_SPEAKER_00_vocals.mp3`） |
+
+**成功响应示例**：
+
+```json
+{
+  "status": "success",
+  "message": "临时参考音上传成功",
+  "session_id": "8efb100a295c0c690931",
+  "segment_id": "8efb100a295c0c690931_0000_SPEAKER_00_vocals.mp3",
+  "ref_path": "ephemeral/8efb100a295c0c690931/8efb100a295c0c690931_0000_SPEAKER_00_vocals.mp3",
+  "file_path": "/path/to/assets/ephemeral/...",
+  "expires_at": "2026-06-04T06:00:00Z"
+}
+```
+
+合成时在 **`POST /v1/audio/speech`** 中传 `prompt_speech_path` 为返回的 **`ref_path`**（与 `voice` 二选一）。
+
+### TTL 自动清理
+
+| 环境变量 | 默认 | 说明 |
+|----------|------|------|
+| `INDEX_TTS_EPHEMERAL_DIR` | `assets/ephemeral` | 临时参考音根目录 |
+| `INDEX_TTS_EPHEMERAL_TTL_SECONDS` | `86400`（24h） | session 生命周期；每次上传或 TTS 引用时**滑动续期** |
+| `INDEX_TTS_EPHEMERAL_CLEANUP_INTERVAL_SECONDS` | `300` | 网关后台扫描间隔（秒） |
+
+网关启动后后台任务周期性扫描 `assets/ephemeral/*/`，读取各 session 目录下 **`.session.json`** 中的 `expires_at`；已过期则 **`shutil.rmtree` 删除整个 session 目录**。无元数据文件的目录按目录 mtime 兜底清理。
 
 ---
 
@@ -415,33 +492,31 @@ redis-cli -u "$INDEX_TTS_REDIS_URL" ZCARD "${INDEX_TTS_REQUEST_QUEUE_NAME:-index
 
 | 查询参数 | 类型 | 默认 | 说明 |
 |----------|------|------|------|
-| `wait_timeout_seconds` | int | `180` | 网关**轮询 Redis 等待结果**的最长时间（1～1800 秒）。超时则不再阻塞，见下表 |
+| `wait_timeout_seconds` | int | `180` | 网关在本 POST 上**同步阻塞**的最长时间（1～1800 秒），对齐 OpenAI 单请求等待 |
 | `auto_split` | bool | `true` | 是否对超出 `INDEX_TTS_AUTO_SPLIT_THRESHOLD` 字符的文本**自动分段并发**投队（详见下文「长文本自动分段」）|
 
 | HTTP | 说明 |
 |------|------|
 | `200` | 成功，响应体为 `audio/wav` 二进制 |
-| `202` | 在 `wait_timeout_seconds` 内未完成；返回 `request_id`（长文本附带 `job_ids`），按下文说明异步查询 |
+| `504` | 在 `wait_timeout_seconds` 内未完成；增大该参数后重试同一 POST |
 | `503` | 活跃请求数已达 `max-request-size`（背压），请稍后重试 |
 | `400` / `422` / `500` | 参数错误、校验失败或任务失败 |
 
 #### 长文本自动分段（多 GPU 并发）
 
-当文本长度超过 **`INDEX_TTS_AUTO_SPLIT_THRESHOLD`**（默认 150 字符）且 `auto_split=true` 时：
+当文本长度超过 **`INDEX_TTS_AUTO_SPLIT_THRESHOLD`**（默认 1200 字符）且 `auto_split=true` 时：
 
-1. 网关在 API 层将文本按 **`INDEX_TTS_AUTO_SPLIT_SEGMENT_LENGTH`**（默认 100 字符）分割为 N 段。
+1. 网关在 API 层将文本按 **`INDEX_TTS_AUTO_SPLIT_SEGMENT_LENGTH`**（默认 1000 字符）分割为 N 段；为避免最后只剩一两个词，实际分段可能少量超过目标长度。
 2. N 个子任务**同时**投入 Redis 队列，被不同 GPU Worker **并行**处理。
 3. 所有子任务完成后，网关按原始顺序合并音频（段间插入 `interval_silence` ms 静音），一次返回完整 WAV。
-4. 若在 `wait_timeout_seconds` 内未全部完成，返回 **202** + `request_id`，客户端统一调用：
-   - `GET /requests/{request_id}` — 查看请求状态（内部可能是单任务或分段组）
-   - `GET /requests/{request_id}/audio` — 状态为 `done` 时取最终音频
+4. 若在 `wait_timeout_seconds` 内未全部完成，返回 **504**；客户端增大 `wait_timeout_seconds` 后**重试同一 POST**。队列整体进度见 **`GET /queue/progress`**。
 
 **环境变量**：
 
 | 变量 | 默认 | 说明 |
 |------|------|------|
-| `INDEX_TTS_AUTO_SPLIT_THRESHOLD` | `150` | 字符数阈值；0 表示禁用自动分段 |
-| `INDEX_TTS_AUTO_SPLIT_SEGMENT_LENGTH` | `100` | 每段最大字符数 |
+| `INDEX_TTS_AUTO_SPLIT_THRESHOLD` | `1000` | 字符数阈值；0 表示禁用自动分段 |
+| `INDEX_TTS_AUTO_SPLIT_SEGMENT_LENGTH` | `1000` | 每段目标最大字符数；为避免极短尾段，实际分段可能少量超过该值 |
 
 ### 单体模式下的行为（`api.main`）
 
@@ -487,9 +562,12 @@ redis-cli -u "$INDEX_TTS_REDIS_URL" ZCARD "${INDEX_TTS_REQUEST_QUEUE_NAME:-index
 | 字段 | 类型 | 必填 | 默认 | 说明 |
 |------|------|------|------|------|
 | `model` | string | 是 | | 模型名（兼容字段；当前实现不参与路由分发） |
-| `voice` | string | 是 | | 映射到 `speaker`（音色 ID） |
+| `voice` | string | 否* | | 映射到 `speaker`（持久音色 ID） |
+| `prompt_speech_path` | string | 否* | | 参考音路径（如 `ephemeral/{session_id}/seg.mp3`） |
 | `input` | string | 是 | | 映射到 `text` |
-| `response_format` | string | 否 | `wav` | 支持 `wav` / `mp3` |
+| `response_format` | string | 否 | `wav` | 支持 `wav` / `mp3` / `opus` |
+
+\* `voice` 与 `prompt_speech_path` **必须且只能提供一个**。
 
 鉴权头可传 `Authorization: Bearer <apiKey>`（当前实现不会校验该字段，仅做协议兼容）。
 
@@ -497,7 +575,8 @@ redis-cli -u "$INDEX_TTS_REDIS_URL" ZCARD "${INDEX_TTS_REQUEST_QUEUE_NAME:-index
 - 成功时直接返回音频二进制：
   - `response_format=wav` → `Content-Type: audio/wav`
   - `response_format=mp3` → `Content-Type: audio/mpeg`
-- 队列网关在等待超时时会返回 `202` + `request_id`（与 `/tts` 行为一致）。
+  - `response_format=opus` → `Content-Type: audio/opus`（Ogg Opus，依赖 ffmpeg + libopus）
+- 队列网关在未完成时返回 **`504`**（与 `/tts` 一致）；请增大 `wait_timeout_seconds` 后重试同一 POST。
 
 ---
 
@@ -545,23 +624,19 @@ redis-cli -u "$INDEX_TTS_REDIS_URL" ZCARD "${INDEX_TTS_REQUEST_QUEUE_NAME:-index
 
 ---
 
-## GET `/requests/{request_id}`
-
-**适用**：仅 **队列网关**；推荐客户端统一使用该接口查询请求状态。
-
-返回 JSON 字段：`request_id`、`status`（`queued` / `processing` / `done` / `failed`）、`request_type`、`client_request_id`、`job_id`、`group_id`、`created_at`、`updated_at`、`error`。
-
----
-
 ## GET `/requests/{request_id}/audio`
 
-**适用**：仅 **队列网关**；推荐客户端统一使用该接口获取音频结果。
+**适用**：仅 **队列网关**；**备用**（已知 `request_id` 时同步取音频）。**常规客户端仅使用 POST 阻塞等待**。
 
-当 `status=done` 时返回最终 `audio/wav`：
-- 单任务请求：返回对应 job 音频；
-- 分段请求：返回组装后的合并音频。
+| 查询参数 | 类型 | 默认 | 说明 |
+|----------|------|------|------|
+| `wait_timeout_seconds` | int | `180` | 阻塞直至返回 WAV 或超时（1～1800） |
 
-未完成返回 `409`，过期返回 `404`。
+| HTTP | 说明 |
+|------|------|
+| `200` | 音频就绪 |
+| `504` | 超时，增大 `wait_timeout_seconds` 后重试 |
+| `404` / `500` | 请求过期或合成失败 |
 
 ---
 
@@ -604,16 +679,16 @@ redis-cli -u "$INDEX_TTS_REDIS_URL" ZCARD "${INDEX_TTS_REQUEST_QUEUE_NAME:-index
 | 409 | 任务尚未完成（例如对未完成 job 请求 `/jobs/{id}/audio`） |
 | 422 | JSON 无法解析为约定模型（常见：请求体字符串内含裸换行等非法控制字符） |
 | 500 | 服务器内部错误或 TTS 任务失败（队列模式下失败信息可能在 `detail` 或 `GET /jobs` 的 `error`） |
-| 202 | **仅队列网关**：`/tts`、`/tts_v2` 在 `wait_timeout_seconds` 内未等到完成，返回 `request_id`，需轮询 |
+| 504 | **仅队列网关**：POST（或备用 GET `/audio`）在 `wait_timeout_seconds` 内未完成 |
 | 503 | **仅队列网关**：活跃请求数已达上限（背压） |
 
 ---
 
 ## 客户端调用建议（队列模式）
 
-- **新接入**优先使用 **`POST /tts_v2`**。
-- **同步拿音频**：设置合适的 **`wait_timeout_seconds`**（秒）；若队列空闲且文本较短，可能直接 **`200` + WAV**；否则 **`202` + `request_id`**。请先判断状态码与 **`Content-Type`**，再解析 JSON 或保存音频。
-- **批量或长耗时**：使用较短等待时间或接受 **`202`**，统一轮询 `GET /requests/{request_id}`，完成后 `GET /requests/{request_id}/audio`。
+- **新接入**仅使用 **`POST /v1/audio/speech`**（OpenAI 兼容）。
+- **对齐 OpenAI**：单次 **`POST`**，保持连接直至 **`200` + WAV**；请设置足够大的 **`wait_timeout_seconds`**（长文本建议 600～1800）。超时 **`504`** 时增大该参数重试。
+- **队列监控**：`GET /queue/progress` 查看整体进度（非单请求轮询）。
 - **幂等与重试**：对每一段/每一条业务固定 **`client_request_id`**，避免网络超时后重复提交产生多条队列任务；无该字段时每次 `POST` 都会产生新的 `request_id`。
 - **JSON 正文**：长文本勿在 JSON 字符串内直接换行，使用 `\n` 或 **` -d @file.json`**，否则易触发 **422**（`Invalid control character`）。
 - **并发**：Worker 数为 N 时，同时进行的合成约 N 路；HTTP 并发不宜远大于队列容量与网关承载，避免大量长连接占满资源。请求数达上限时返回 **503**，应退避重试。

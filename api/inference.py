@@ -10,7 +10,11 @@ import torch
 from indextts.infer_v2 import IndexTTS2
 
 from api.database.engine import create_voice_session_factory
+from api.config import resolve_ephemeral_dir
 from api.services import voices as voice_service
+from api.services.ephemeral_audio import touch_session_expiry
+from api.utils.ref_audio_path import resolve_ref_audio_path
+from api.voice_context import resolve_prompt_dir
 
 logger = logging.getLogger("indextts2-api")
 
@@ -73,12 +77,15 @@ class IndexTTS2Model:
         self.sampling_rate = 24000
         logger.info(f"Model sample rate: {self.sampling_rate}")
 
-        self.prompt_dir = "assets/speakers"
+        self.prompt_dir = resolve_prompt_dir()
         if not os.path.exists(self.prompt_dir):
             os.makedirs(self.prompt_dir, exist_ok=True)
             logger.info(f"Created prompt directory: {self.prompt_dir}")
+        self.ephemeral_dir = resolve_ephemeral_dir()
+        if not os.path.exists(self.ephemeral_dir):
+            os.makedirs(self.ephemeral_dir, exist_ok=True)
+            logger.info(f"Created ephemeral directory: {self.ephemeral_dir}")
         self.voice_session_factory = create_voice_session_factory(self.prompt_dir)
-        voice_service.sync_files_to_voice_db(self.voice_session_factory, self.prompt_dir)
 
     def generate_speech(
         self,
@@ -117,13 +124,8 @@ class IndexTTS2Model:
                 if db_prompt_path:
                     prompt_speech_path = db_prompt_path
                 else:
-                    prompt_speech_path = self.find_prompt_by_speaker(speaker)
-                    voice_service.upsert_voice(
-                        self.voice_session_factory,
-                        self.prompt_dir,
-                        voice_id=speaker,
-                        file_name=os.path.basename(prompt_speech_path),
-                        name=speaker,
+                    raise ValueError(
+                        f"speaker '{speaker}' 未在音色库中注册，请通过 /speakers 接口录入"
                     )
                 voice = voice_service.get_voice_by_id(
                     self.voice_session_factory, self.prompt_dir, speaker
@@ -134,12 +136,25 @@ class IndexTTS2Model:
                 raise ValueError("必须提供prompt_speech_path或speaker参数")
 
             if prompt_speech_path:
-                if not os.path.isabs(prompt_speech_path):
-                    filename = os.path.basename(prompt_speech_path)
-                    prompt_speech_path = os.path.join(self.prompt_dir, filename)
+                try:
+                    prompt_speech_path = resolve_ref_audio_path(
+                        prompt_speech_path,
+                        prompt_dir=self.prompt_dir,
+                        ephemeral_dir=self.ephemeral_dir,
+                    )
+                except ValueError as e:
+                    raise ValueError(str(e)) from e
                 if not os.path.exists(prompt_speech_path):
                     logger.warning(f"Prompt audio file not found: {prompt_speech_path}")
                     raise ValueError(f"提示音频文件不存在: {prompt_speech_path}")
+                try:
+                    rel = os.path.relpath(prompt_speech_path, self.ephemeral_dir)
+                    if not rel.startswith(".."):
+                        session_id = rel.split(os.sep, 1)[0]
+                        if session_id:
+                            touch_session_expiry(self.ephemeral_dir, session_id)
+                except ValueError:
+                    pass
                 logger.info(f"Prompt audio: {prompt_speech_path}")
                 if not used_voice_id:
                     voice = voice_service.get_voice_by_file_name(
@@ -231,35 +246,6 @@ class IndexTTS2Model:
         except Exception as e:
             logger.error(f"Error generating speech: {e}", exc_info=True)
             raise ValueError(f"Failed to generate speech: {str(e)}")
-
-    def find_prompt_by_speaker(self, speaker_name):
-        if not os.path.exists(self.prompt_dir) or not os.listdir(self.prompt_dir):
-            raise FileNotFoundError(f"提示音频目录不存在或为空: {self.prompt_dir}")
-
-        for ext in [".wav", ".mp3"]:
-            exact_match = os.path.join(self.prompt_dir, f"{speaker_name}{ext}")
-            if os.path.exists(exact_match):
-                return exact_match
-
-        partial_matches = []
-        for file in os.listdir(self.prompt_dir):
-            if file.endswith((".wav", ".mp3")) and speaker_name.lower() in file.lower():
-                partial_matches.append(file)
-
-        if partial_matches:
-            matched_file = partial_matches[0]
-            prompt_path = os.path.join(self.prompt_dir, matched_file)
-            logger.warning(f"未找到精确匹配'{speaker_name}'的音频，使用部分匹配: {matched_file}")
-            return prompt_path
-
-        audio_files = [f for f in os.listdir(self.prompt_dir) if f.endswith((".wav", ".mp3"))]
-        if audio_files:
-            audio_files.sort()
-            prompt_path = os.path.join(self.prompt_dir, audio_files[0])
-            logger.warning(f"未找到与'{speaker_name}'相关的音频，使用默认音频: {audio_files[0]}")
-            return prompt_path
-
-        raise FileNotFoundError(f"未找到任何可用的提示音频文件，请检查{self.prompt_dir}目录")
 
     def generate_speech_segment(self, text_segment, **kwargs):
         logger.debug(f"Generating segment: {text_segment[:30]}...")

@@ -11,7 +11,9 @@ import redis
 DEFAULT_JOB_QUEUE_NAME = "indextts:tts:jobs"
 DEFAULT_REQUEST_QUEUE_NAME = "indextts:tts:requests"
 DEFAULT_CLIENT_REQUEST_PREFIX = "indextts:tts:clientreq:"
-DEFAULT_JOB_TTL_SECONDS = 1800
+# Redis 中任务状态、请求 metadata、音频缓存的生存时间。批量/长队列场景下需覆盖
+# 「入队排队 + 合成 + 客户端拉取」整段窗口，默认 12 小时；可通过 INDEX_TTS_JOB_TTL_SECONDS 调整。
+DEFAULT_JOB_TTL_SECONDS = 43200
 DEFAULT_MAX_REQUEST_SIZE = 200
 
 

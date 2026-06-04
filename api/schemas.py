@@ -1,6 +1,6 @@
 from typing import Dict, List, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 class TextToSpeechRequest(BaseModel):
@@ -72,9 +72,18 @@ class StreamTTSRequest(BaseModel):
 
 class OpenAISpeechRequest(BaseModel):
     model: str
-    voice: str
+    voice: Optional[str] = None
     input: str
-    response_format: Literal["wav", "mp3"] = "wav"
+    response_format: Literal["wav", "mp3", "opus"] = "wav"
+    prompt_speech_path: Optional[str] = None
+
+    @model_validator(mode="after")
+    def voice_or_prompt_path(self) -> "OpenAISpeechRequest":
+        has_voice = bool(self.voice and self.voice.strip())
+        has_path = bool(self.prompt_speech_path and self.prompt_speech_path.strip())
+        if has_voice == has_path:
+            raise ValueError("voice 与 prompt_speech_path 必须且只能提供一个")
+        return self
 
 
 class VoiceInfo(BaseModel):
@@ -82,17 +91,14 @@ class VoiceInfo(BaseModel):
     voice_id: str
     name: str
     description: str = ""
-    category: Optional[str] = None
     language: Optional[str] = None
     gender: Optional[str] = None
     file_name: str
-    enabled: bool = True
-    owner: Optional[str] = None
-    version: Optional[str] = None
+    request_count: int = 0
+    total_audio_seconds: float = 0.0
+    last_used_at: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
-    usage_count: int = 0
-    last_used_at: Optional[str] = None
     audio_url: Optional[str] = None
     audio_path: Optional[str] = None
 
@@ -110,13 +116,27 @@ class SpeakersListResponse(BaseModel):
 class VoiceUpdateRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
-    category: Optional[str] = None
     language: Optional[str] = None
     gender: Optional[str] = None
-    labels: Optional[Dict[str, str]] = None
-    enabled: Optional[bool] = None
-    owner: Optional[str] = None
-    version: Optional[str] = None
+    file_name: Optional[str] = None
+
+
+class UploadAudioResponse(BaseModel):
+    status: str
+    message: str
+    file_path: str
+    speaker_name: str
+    voice_id: str
+
+
+class UploadRefAudioResponse(BaseModel):
+    status: str
+    message: str
+    session_id: str
+    segment_id: str
+    ref_path: str
+    file_path: str
+    expires_at: str
 
 
 class VoiceCreateRequest(BaseModel):
@@ -125,11 +145,6 @@ class VoiceCreateRequest(BaseModel):
     voice_id: str
     name: Optional[str] = None
     description: str = ""
-    category: Optional[str] = None
     language: Optional[str] = None
     gender: Optional[str] = None
-    labels: Optional[Dict[str, str]] = None
-    owner: Optional[str] = None
-    version: Optional[str] = None
-    enabled: bool = True
     file_name: Optional[str] = None

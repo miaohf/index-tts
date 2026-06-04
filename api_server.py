@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import signal
 import subprocess
@@ -20,7 +21,12 @@ import sys
 import time
 from pathlib import Path
 
+from api.logging_setup import configure_logging
+from api.redis_queue import job_ttl_seconds as _default_job_ttl_seconds
+
 ROOT = Path(__file__).resolve().parent
+UVICORN_LOG_CONFIG = ROOT / "api" / "uvicorn_log_config.json"
+logger = logging.getLogger("indextts2-launcher")
 
 
 def _terminate_all(procs: list[subprocess.Popen]) -> None:
@@ -36,6 +42,7 @@ def _terminate_all(procs: list[subprocess.Popen]) -> None:
 
 
 def main() -> None:
+    configure_logging()
     parser = argparse.ArgumentParser(description="IndexTTS API（Redis 网关 + 多 GPU Worker）")
     parser.add_argument(
         "--gpus",
@@ -50,7 +57,12 @@ def main() -> None:
     parser.add_argument("--redis-url", default="redis://127.0.0.1:6379/0", help="Redis 连接串")
     parser.add_argument("--queue-name", default="indextts:tts:jobs", help="任务队列名")
     parser.add_argument("--request-queue-name", default="indextts:tts:requests", help="请求队列名（独立于任务队列）")
-    parser.add_argument("--job-ttl-seconds", type=int, default=1800, help="任务状态与结果保留秒数")
+    parser.add_argument(
+        "--job-ttl-seconds",
+        type=int,
+        default=_default_job_ttl_seconds(),
+        help="任务状态与结果在 Redis 中的保留秒数（默认与同模块 job_ttl_seconds 一致，可用环境变量 INDEX_TTS_JOB_TTL_SECONDS）",
+    )
     parser.add_argument("--max-request-size", type=int, default=200, help="最大活跃请求数（达到上限后拒绝新请求）")
     parser.add_argument(
         "--max-queue-size",
@@ -82,6 +94,8 @@ def main() -> None:
         "-m",
         "uvicorn",
         "api.gateway_main:app",
+        "--log-config",
+        str(UVICORN_LOG_CONFIG),
         "--host",
         args.host,
         "--port",
@@ -89,9 +103,12 @@ def main() -> None:
     ]
     gateway = subprocess.Popen(gateway_cmd, env=gateway_env, cwd=str(ROOT))
     procs.append(gateway)
-    print(
-        f"[api_server] 网关已启动: http://{args.host}:{args.port}/docs, redis={args.redis_url}, queue={args.queue_name}",
-        flush=True,
+    logger.info(
+        "[api_server] Gateway started: http://%s:%s/docs, redis=%s, queue=%s",
+        args.host,
+        args.port,
+        args.redis_url,
+        args.queue_name,
     )
 
     def handle_signal(_sig: int, _frame: object) -> None:
@@ -118,14 +135,17 @@ def main() -> None:
         ]
         p = subprocess.Popen(full_cmd, env=env, cwd=str(ROOT))
         procs.append(p)
-        print(
-            f"[api_server] 已启动 worker {i + 1}/{n}: physical_gpu={i}, queue={args.queue_name}",
-            flush=True,
+        logger.info(
+            "[api_server] Started worker %d/%d: physical_gpu=%d, queue=%s",
+            i + 1,
+            n,
+            i,
+            args.queue_name,
         )
 
-    print(
-        f"[api_server] 总计进程: gateway x1 + worker x{n}; 已启用统一入口与服务端队列调度。",
-        flush=True,
+    logger.info(
+        "[api_server] Total processes: gateway x1 + worker x%d; queue scheduling enabled.",
+        n,
     )
 
     exit_code = 0

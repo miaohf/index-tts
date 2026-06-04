@@ -1,4 +1,5 @@
 import functools
+import logging
 
 import torch
 import torch.nn as nn
@@ -17,6 +18,8 @@ from indextts.gpt.conformer_encoder import ConformerEncoder
 from indextts.gpt.perceiver import PerceiverResampler
 from indextts.utils.arch_util import AttentionBlock
 from indextts.utils.typical_sampling import TypicalLogitsWarper
+
+logger = logging.getLogger("indextts2-gpt")
 
 
 def null_position_embeddings(range, dim):
@@ -718,12 +721,12 @@ class UnifiedVoice(nn.Module):
 
         speech_conditioning_latent = self.get_conditioning(speech_condition.transpose(1,2), cond_lengths)
         if emo_vec is None:
-            print('compute emo vec')
+            logger.debug("Computing emotion vector from emotion prompt")
             emo_vec = self.get_emo_conditioning(emo_speech_condition.transpose(1,2), emo_cond_lengths)
             emo_vec = self.emovec_layer(emo_vec)
             emo_vec = self.emo_layer(emo_vec)
         else:
-            print('Use the specified emotion vector')
+            logger.debug("Using specified emotion vector")
 
         tmp = torch.zeros(text_inputs.size(0)).to(text_inputs.device)
         duration_emb =  self.speed_emb(torch.zeros_like(tmp).long())

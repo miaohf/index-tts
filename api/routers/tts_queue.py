@@ -5,15 +5,14 @@ import logging
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 
-from api.schemas import EnhancedTTSRequest, OpenAISpeechRequest, TextToSpeechRequest
+from api.schemas import OpenAISpeechRequest, TextToSpeechRequest
 from api.services.queue_progress_service import get_queue_progress, get_queue_status
 from api.services.queue_query_service import (
     get_group_audio_content,
     get_group_detail,
     get_job_audio_content,
     get_job_detail,
-    get_request_audio_content,
-    get_request_detail,
+    wait_for_request_audio_content,
 )
 from api.services.queue_submit_service import (
     AUTO_SPLIT_SEGMENT_LENGTH,
@@ -28,66 +27,6 @@ from api.utils.audio import transcode_wav_bytes
 
 logger = logging.getLogger("indextts2-api")
 router = APIRouter(tags=["tts"])
-
-
-@router.post("/tts")
-async def queue_tts(
-    body: TextToSpeechRequest,
-    wait_timeout_seconds: int = Query(default=DEFAULT_WAIT_TIMEOUT_SECONDS, ge=1, le=1800),
-    auto_split: bool = Query(default=True, description="长文本自动分段并发到多 GPU（长度超过 INDEX_TTS_AUTO_SPLIT_THRESHOLD）"),
-):
-    if not body.prompt_speech_path and not body.speaker:
-        raise HTTPException(status_code=400, detail="必须提供prompt_speech_path或speaker参数")
-
-    payload = to_payload(body)
-    if auto_split and should_split(body.text):
-        segments = split_text(body.text, AUTO_SPLIT_SEGMENT_LENGTH)
-        logger.info("/tts: text len=%d → %d segments (auto_split)", len(body.text), len(segments))
-        return await enqueue_group_and_wait(
-            request_type="tts_v1",
-            base_payload=payload,
-            segments=segments,
-            wait_timeout_seconds=wait_timeout_seconds,
-            interval_silence_ms=200,
-            client_request_id=body.client_request_id,
-        )
-
-    return await enqueue_and_wait(
-        request_type="tts_v1",
-        payload=payload,
-        wait_timeout_seconds=wait_timeout_seconds,
-        client_request_id=body.client_request_id,
-    )
-
-
-@router.post("/tts_v2")
-async def queue_tts_v2(
-    body: EnhancedTTSRequest,
-    wait_timeout_seconds: int = Query(default=DEFAULT_WAIT_TIMEOUT_SECONDS, ge=1, le=1800),
-    auto_split: bool = Query(default=True, description="长文本自动分段并发到多 GPU（长度超过 INDEX_TTS_AUTO_SPLIT_THRESHOLD）"),
-):
-    if not body.prompt_speech_path and not body.speaker:
-        raise HTTPException(status_code=400, detail="必须提供prompt_speech_path或speaker参数")
-
-    payload = to_payload(body)
-    if auto_split and should_split(body.text):
-        segments = split_text(body.text, AUTO_SPLIT_SEGMENT_LENGTH)
-        logger.info("/tts_v2: text len=%d → %d segments (auto_split)", len(body.text), len(segments))
-        return await enqueue_group_and_wait(
-            request_type="tts_v2",
-            base_payload=payload,
-            segments=segments,
-            wait_timeout_seconds=wait_timeout_seconds,
-            interval_silence_ms=body.interval_silence,
-            client_request_id=body.client_request_id,
-        )
-
-    return await enqueue_and_wait(
-        request_type="tts_v2",
-        payload=payload,
-        wait_timeout_seconds=wait_timeout_seconds,
-        client_request_id=body.client_request_id,
-    )
 
 
 @router.get("/jobs/{job_id}")
@@ -110,14 +49,18 @@ async def get_group_audio(group_id: str):
     return Response(content=get_group_audio_content(group_id), media_type="audio/wav")
 
 
-@router.get("/requests/{request_id}")
-async def get_request(request_id: str):
-    return get_request_detail(request_id)
-
-
 @router.get("/requests/{request_id}/audio")
-async def get_request_audio(request_id: str):
-    return Response(content=get_request_audio_content(request_id), media_type="audio/wav")
+async def get_request_audio(
+    request_id: str,
+    wait_timeout_seconds: int = Query(
+        default=DEFAULT_WAIT_TIMEOUT_SECONDS,
+        ge=1,
+        le=1800,
+        description="同步阻塞直至返回 WAV 或超时（504）；常规请直接用 POST /v1/audio/speech",
+    ),
+):
+    audio = await wait_for_request_audio_content(request_id, wait_timeout_seconds)
+    return Response(content=audio, media_type="audio/wav")
 
 
 @router.get("/queue/status")
@@ -139,10 +82,12 @@ async def queue_openai_audio_speech(
     wait_timeout_seconds: int = Query(default=DEFAULT_WAIT_TIMEOUT_SECONDS, ge=1, le=1800),
     auto_split: bool = Query(default=True, description="长文本自动分段并发到多 GPU（长度超过 INDEX_TTS_AUTO_SPLIT_THRESHOLD）"),
 ):
+    """OpenAI Speech API 兼容：POST /v1/audio/speech（唯一对外 TTS 合成入口）。"""
     payload = to_payload(
         TextToSpeechRequest(
             text=body.input,
             speaker=body.voice,
+            prompt_speech_path=body.prompt_speech_path,
         )
     )
 

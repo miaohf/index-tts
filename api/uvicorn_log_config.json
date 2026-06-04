@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "disable_existing_loggers": false,
+  "formatters": {
+    "default": {
+      "()": "api.log_formatter.IndexTTSFormatter",
+      "fmt": "%(asctime)s - %(levelname_fmt)s - %(location)s %(message)s",
+      "datefmt": "%Y-%m-%d %H:%M:%S",
+      "use_colors": true
+    },
+    "access": {
+      "()": "api.log_formatter.IndexTTSAccessFormatter",
+      "fmt": "%(asctime)s - %(levelname_fmt)s %(client_addr)s - \"%(request_line)s\" %(status_code)s",
+      "datefmt": "%Y-%m-%d %H:%M:%S",
+      "use_colors": true
+    }
+  },
+  "handlers": {
+    "default": {
+      "formatter": "default",
+      "class": "logging.StreamHandler",
+      "stream": "ext://sys.stdout"
+    },
+    "access": {
+      "formatter": "access",
+      "class": "logging.StreamHandler",
+      "stream": "ext://sys.stdout"
+    }
+  },
+  "loggers": {
+    "uvicorn": {
+      "handlers": ["default"],
+      "level": "INFO",
+      "propagate": false
+    },
+    "uvicorn.error": {
+      "handlers": ["default"],
+      "level": "INFO",
+      "propagate": false
+    },
+    "uvicorn.access": {
+      "handlers": ["access"],
+      "level": "INFO",
+      "propagate": false
+    },
+    "indextts2-api": {
+      "handlers": ["default"],
+      "level": "INFO",
+      "propagate": false
+    },
+    "indextts2-worker": {
+      "handlers": ["default"],
+      "level": "INFO",
+      "propagate": false
+    },
+    "indextts2-launcher": {
+      "handlers": ["default"],
+      "level": "INFO",
+      "propagate": false
+    },
+    "indextts2-infer": {
+      "handlers": ["default"],
+      "level": "INFO",
+      "propagate": false
+    },
+    "indextts2-gpt": {
+      "handlers": ["default"],
+      "level": "WARNING",
+      "propagate": false
+    },
+    "accelerate": {
+      "handlers": ["default"],
+      "level": "INFO",
+      "propagate": false
+    },
+    "transformers": {
+      "handlers": ["default"],
+      "level": "WARNING",
+      "propagate": false
+    }
+  },
+  "root": {
+    "handlers": ["default"],
+    "level": "INFO"
+  }
+}

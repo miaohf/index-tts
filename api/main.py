@@ -9,16 +9,10 @@ import os
 if "CUDA_VISIBLE_DEVICES" not in os.environ:
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-import logging
-
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
 from api.routers import root, speakers, tts, upload
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 
 _API_DESCRIPTION = """
 ## IndexTTS 2.0 API 使用说明
@@ -55,5 +49,11 @@ app.include_router(root.router)
 app.include_router(speakers.router)
 app.include_router(tts.router)
 app.include_router(upload.router)
+
+
+@app.get("/openai.json", include_in_schema=False)
+async def openai_json_compat():
+    """OpenClaw 等客户端常误请求 /openai.json，兼容返回 OpenAPI 规范。"""
+    return JSONResponse(app.openapi())
 
 # 路由模块在导入时已加载 `api.inference`（初始化模型与音色库）
