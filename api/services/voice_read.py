@@ -7,15 +7,15 @@ from typing import Optional
 
 from fastapi import HTTPException, Request
 
-from api.schemas import SpeakersListResponse
-from api.services import voices as voice_service
-from api.utils.audio import file_response_for_speaker, resolve_speaker_audio_file, with_audio_url
+from api.schemas import VoiceListResponse
+from api.services import voices as voice_store
+from api.utils.audio import file_response_for_voice, resolve_voice_audio_file, with_audio_url
 from api.voice_context import get_voice_context
 
 logger = logging.getLogger("indextts2-api")
 
 
-def list_speakers(
+def list_voices(
     request: Request,
     *,
     language: Optional[str] = None,
@@ -25,18 +25,18 @@ def list_speakers(
     sort_order: str = "asc",
     page: int = 1,
     page_size: int = 50,
-) -> SpeakersListResponse:
+) -> VoiceListResponse:
     voice_session_factory, prompt_dir = get_voice_context()
     try:
         if not os.path.exists(prompt_dir):
-            return SpeakersListResponse(
+            return VoiceListResponse(
                 voices=[],
-                speakers=[],
+                voice_ids=[],
                 count=0,
                 directory=prompt_dir,
                 message="提示音频目录不存在",
             )
-        voices, total = voice_service.list_voices_from_db(
+        voices, total = voice_store.list_voices_from_db(
             voice_session_factory,
             prompt_dir,
             language=language,
@@ -48,33 +48,33 @@ def list_speakers(
             page_size=page_size,
         )
         voices_out = [with_audio_url(request, v) for v in voices]
-        return SpeakersListResponse(
+        return VoiceListResponse(
             voices=voices_out,
-            speakers=[v.voice_id for v in voices_out],
+            voice_ids=[v.voice_id for v in voices_out],
             count=total,
             directory=prompt_dir,
             page=page,
             page_size=page_size,
         )
     except Exception as e:
-        logger.error("Error getting speakers: %s", e)
+        logger.error("Error listing voices: %s", e)
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-def download_speaker_audio(voice_id: str):
-    if not voice_id or voice_id != Path(voice_id).name:
-        raise HTTPException(status_code=404, detail="speaker 不存在")
+def download_voice_audio(voice_id: str):
+    if not voice_id or voice_id != Path(voice_id).name:#
+        raise HTTPException(status_code=404, detail="voice 不存在")
     voice_session_factory, prompt_dir = get_voice_context()
     try:
-        voice = voice_service.get_voice_by_id(voice_session_factory, prompt_dir, voice_id)
+        voice = voice_store.get_voice_by_id(voice_session_factory, prompt_dir, voice_id)
         if voice is None:
-            raise HTTPException(status_code=404, detail="speaker 不存在")
-        path = resolve_speaker_audio_file(prompt_dir, voice)
+            raise HTTPException(status_code=404, detail="voice 不存在")
+        path = resolve_voice_audio_file(prompt_dir, voice)
         if path is None:
             raise HTTPException(status_code=404, detail="音频文件不存在")
-        return file_response_for_speaker(path)
+        return file_response_for_voice(path)
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Error serving speaker audio %s: %s", voice_id, e, exc_info=True)
+        logger.error("Error serving voice audio %s: %s", voice_id, e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e)) from e

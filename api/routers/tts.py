@@ -25,14 +25,14 @@ async def generate_speech_v1(request: Request):
             logger.error(f"Request parsing error: {e}")
             raise HTTPException(status_code=422, detail=f"Invalid request format: {str(e)}")
 
-        if not req.prompt_speech_path and not req.speaker:
-            raise HTTPException(status_code=400, detail="必须提供prompt_speech_path或speaker参数")
+        if not req.prompt_speech_path and not req.voice:
+            raise HTTPException(status_code=400, detail="必须提供 prompt_speech_path 或 voice 参数")
 
         try:
             wav_data, sample_rate = model.generate_speech(
                 text=req.text,
                 prompt_speech_path=req.prompt_speech_path,
-                speaker=req.speaker,
+                voice=req.voice,
                 temperature=req.temperature,
                 top_k=req.top_k,
                 top_p=req.top_p,
@@ -69,14 +69,14 @@ async def generate_speech_v2(request: Request):
         except Exception as e:
             raise HTTPException(status_code=422, detail=f"Invalid request format: {str(e)}")
 
-        if not req.prompt_speech_path and not req.speaker:
-            raise HTTPException(status_code=400, detail="必须提供prompt_speech_path或speaker参数")
+        if not req.prompt_speech_path and not req.voice:
+            raise HTTPException(status_code=400, detail="必须提供 prompt_speech_path 或 voice 参数")
 
         try:
             wav_data, sample_rate = model.generate_speech(
                 text=req.text,
                 prompt_speech_path=req.prompt_speech_path,
-                speaker=req.speaker,
+                voice=req.voice,
                 temperature=req.temperature,
                 top_k=req.top_k,
                 top_p=req.top_p,
@@ -121,8 +121,8 @@ async def stream_tts(request: Request):
         except Exception as e:
             raise HTTPException(status_code=422, detail=f"Invalid request format: {str(e)}")
 
-        if not req.prompt_speech_path and not req.speaker:
-            raise HTTPException(status_code=400, detail="必须提供prompt_speech_path或speaker参数")
+        if not req.prompt_speech_path and not req.voice:
+            raise HTTPException(status_code=400, detail="必须提供 prompt_speech_path 或 voice 参数")
 
         segments = split_text(req.text, req.max_segment_length)
         logger.info(f"Text split into {len(segments)} segments for streaming")
@@ -134,7 +134,7 @@ async def stream_tts(request: Request):
                     audio_data = model.generate_speech_segment(
                         text_segment=segment,
                         prompt_speech_path=req.prompt_speech_path,
-                        speaker=req.speaker,
+                        voice=req.voice,
                         temperature=req.temperature,
                         top_k=req.top_k,
                         top_p=req.top_p,
@@ -189,7 +189,7 @@ async def openai_audio_speech(request: Request):
         try:
             wav_data, sample_rate = model.generate_speech(
                 text=req.input,
-                speaker=req.voice,
+                voice=req.voice,
                 emo_control_mode=0,
             )
             audio_bytes, media_type = encode_audio_bytes(wav_data, sample_rate, response_format=req.response_format)

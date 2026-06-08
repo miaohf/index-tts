@@ -86,7 +86,7 @@ async def queue_openai_audio_speech(
     payload = to_payload(
         TextToSpeechRequest(
             text=body.input,
-            speaker=body.voice,
+            voice=body.voice,
             prompt_speech_path=body.prompt_speech_path,
         )
     )

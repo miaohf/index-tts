@@ -45,12 +45,17 @@ def _encode_wav_bytes(wav_data: Any, sample_rate: int) -> bytes:
     return buf.getvalue()
 
 
+def _payload_voice(payload: dict[str, Any]) -> str | None:
+    return payload.get("voice") or payload.get("speaker")
+
+
 def _run_job(model: Any, request_type: str, payload: dict[str, Any]) -> tuple[Any, int]:
+    voice = _payload_voice(payload)
     if request_type == "tts_v1":
         return model.generate_speech(
             text=payload["text"],
             prompt_speech_path=payload.get("prompt_speech_path"),
-            speaker=payload.get("speaker"),
+            voice=voice,
             temperature=payload.get("temperature", 0.8),
             top_k=payload.get("top_k", 30),
             top_p=payload.get("top_p", 0.8),
@@ -66,7 +71,7 @@ def _run_job(model: Any, request_type: str, payload: dict[str, Any]) -> tuple[An
         return model.generate_speech(
             text=payload["text"],
             prompt_speech_path=payload.get("prompt_speech_path"),
-            speaker=payload.get("speaker"),
+            voice=voice,
             temperature=payload.get("temperature", 0.8),
             top_k=payload.get("top_k", 30),
             top_p=payload.get("top_p", 0.8),

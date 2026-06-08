@@ -222,12 +222,12 @@ def record_voice_usage(
 def resolve_voice_prompt_path(
     session_factory: sessionmaker[Session],
     prompt_dir: str,
-    speaker: str,
+    voice_id: str,
 ) -> Optional[str]:
-    voice = get_voice_by_id(session_factory, prompt_dir, speaker)
+    voice = get_voice_by_id(session_factory, prompt_dir, voice_id)
     if voice is None:
         return None
     path = os.path.join(prompt_dir, voice.file_name)
     if not os.path.isfile(path):
-        raise ValueError(f"speaker '{speaker}' 的音频文件不存在: {voice.file_name}")
+        raise ValueError(f"voice '{voice_id}' 的音频文件不存在: {voice.file_name}")
     return path

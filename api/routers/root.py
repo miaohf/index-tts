@@ -13,8 +13,7 @@ async def root():
             "/tts_v2 - 增强版文本转语音（2.0新功能）",
             "/v1/audio/speech - OpenAI Speech 兼容接口",
             "/tts_stream - 流式文本转语音",
-            "/upload_audio - 上传音频文件",
-            "/speakers - 获取可用说话人列表；POST /speakers JSON 仅建元数据",
-            "/speakers/{voice_id}/audio - 试听/下载参考原音频",
+            "/v1/audio/voices - 音色列表 / 创建 / 更新 / 删除",
+            "/v1/audio/voices/{voice_id}/audio - 试听/下载参考原音频",
         ],
     }

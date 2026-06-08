@@ -91,7 +91,7 @@ class IndexTTS2Model:
         self,
         text,
         prompt_speech_path=None,
-        speaker=None,
+        voice=None,
         temperature=0.8,
         top_k=30,
         top_p=0.8,
@@ -113,27 +113,27 @@ class IndexTTS2Model:
     ):
         logger.info(f"Generating speech for text: {text[:50]}...")
         torch.manual_seed(seed)
-        used_voice_id = speaker
+        used_voice_id = voice
         used_voice_name = None
 
         try:
-            if speaker and not prompt_speech_path:
+            if voice and not prompt_speech_path:
                 db_prompt_path = voice_service.resolve_voice_prompt_path(
-                    self.voice_session_factory, self.prompt_dir, speaker
+                    self.voice_session_factory, self.prompt_dir, voice
                 )
                 if db_prompt_path:
                     prompt_speech_path = db_prompt_path
                 else:
                     raise ValueError(
-                        f"speaker '{speaker}' 未在音色库中注册，请通过 /speakers 接口录入"
+                        f"voice '{voice}' 未在音色库中注册，请通过 GET /v1/audio/voices 查看或 POST /v1/audio/voices 录入"
                     )
-                voice = voice_service.get_voice_by_id(
-                    self.voice_session_factory, self.prompt_dir, speaker
+                voice_row = voice_service.get_voice_by_id(
+                    self.voice_session_factory, self.prompt_dir, voice
                 )
-                used_voice_name = voice.name if voice else speaker
+                used_voice_name = voice_row.name if voice_row else voice
 
             if not prompt_speech_path:
-                raise ValueError("必须提供prompt_speech_path或speaker参数")
+                raise ValueError("必须提供 prompt_speech_path 或 voice 参数")
 
             if prompt_speech_path:
                 try:

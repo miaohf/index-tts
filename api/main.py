@@ -12,7 +12,7 @@ if "CUDA_VISIBLE_DEVICES" not in os.environ:
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
-from api.routers import root, speakers, tts, upload
+from api.routers import root, tts, voices
 
 _API_DESCRIPTION = """
 ## IndexTTS 2.0 API 使用说明
@@ -30,25 +30,24 @@ python api_server.py --gpus 1
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | / | 服务信息与端点列表 |
-| GET | /speakers | 音色列表（SQLAlchemy/SQLite，支持筛选/排序/分页；每条含 `audio_url` 试听） |
-| POST | /speakers | 仅创建音色元数据（JSON，无需上传文件） |
-| GET | /speakers/{voice_id}/audio | 返回该音色参考音频文件（原文件，供试听/下载） |
+| GET | /v1/audio/voices | 音色列表（OpenAI `audio.voice` 格式） |
+| POST | /v1/audio/speech | OpenAI 兼容 TTS |
+| GET | /v1/audio/voices/{voice_id}/audio | 试听/下载参考音频 |
+| POST | /v1/audio/voices | 上传参考音并创建音色 |
 | POST | /tts | 基础 TTS（兼容 1.0） |
 | POST | /tts_v2 | 增强 TTS（情感控制等） |
 | POST | /tts_stream | 流式 TTS |
-| POST | /upload_audio | 上传参考音频 |
 
 ### 通用说明
-- **音色指定**：`prompt_speech_path`（文件名或路径）与 `speaker`（名称）二选一必填；未写路径时从 `assets/speakers/` 下按名称查找。
+- **音色指定**：`prompt_speech_path`（文件名或路径）与 `voice`（voice_id）二选一必填。
 - **响应**：/tts、/tts_v2 返回 `audio/wav` 二进制；/tts_stream 返回 `application/x-ndjson` 流（每行一个 JSON）。
 """
 
 app = FastAPI(title="IndexTTS 2.0 API", version="2.0.0", description=_API_DESCRIPTION)
 
 app.include_router(root.router)
-app.include_router(speakers.router)
+app.include_router(voices.router)
 app.include_router(tts.router)
-app.include_router(upload.router)
 
 
 @app.get("/openai.json", include_in_schema=False)

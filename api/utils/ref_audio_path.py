@@ -66,7 +66,7 @@ def resolve_ref_audio_path(
 
     支持：
     - ``ephemeral/{session_id}/file.mp3`` → ephemeral 目录
-    - ``file.wav`` / ``speakers/file.wav`` → 持久音色目录（兼容旧行为）
+    - ``file.wav`` / ``voices/file.wav`` → 持久音色目录（``speakers/`` 前缀仍兼容）
     """
     if not ref or not ref.strip():
         raise ValueError("prompt_speech_path 不能为空")
@@ -82,7 +82,9 @@ def resolve_ref_audio_path(
             raise ValueError(f"非法临时参考音路径: {ref}")
         return resolved
 
-    if normalized.startswith("speakers/"):
+    if normalized.startswith("voices/"):
+        relative = normalized[len("voices/") :]
+    elif normalized.startswith("speakers/"):
         relative = normalized[len("speakers/") :]
     else:
         relative = os.path.basename(normalized)

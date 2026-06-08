@@ -42,7 +42,7 @@ def voice_sqlalchemy_url() -> str:
 def public_base_url() -> str | None:
     """
     若设置环境变量 INDEX_TTS_PUBLIC_BASE_URL（例如 https://tts.example.com），
-    则 speakers 列表/详情中的 audio_url 使用该前缀，避免固定为 127.0.0.1 等无法外发的地址。
+    则音色列表/详情中的 audio_url 使用该前缀，避免固定为 127.0.0.1 等无法外发的地址。
     不要尾随斜杠，可带路径前缀（如 https://api.example.com/v1）。
     """
     v = os.environ.get("INDEX_TTS_PUBLIC_BASE_URL", "").strip()

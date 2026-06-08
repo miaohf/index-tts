@@ -7,7 +7,7 @@ class TextToSpeechRequest(BaseModel):
     text: str
     client_request_id: Optional[str] = None
     prompt_speech_path: Optional[str] = None
-    speaker: Optional[str] = None
+    voice: Optional[str] = None
     temperature: float = 0.8
     top_k: int = 30
     top_p: float = 0.8
@@ -24,7 +24,7 @@ class EnhancedTTSRequest(BaseModel):
     text: str
     client_request_id: Optional[str] = None
     prompt_speech_path: Optional[str] = None
-    speaker: Optional[str] = None
+    voice: Optional[str] = None
     temperature: float = 0.8
     top_k: int = 30
     top_p: float = 0.8
@@ -48,7 +48,7 @@ class EnhancedTTSRequest(BaseModel):
 class StreamTTSRequest(BaseModel):
     text: str
     prompt_speech_path: Optional[str] = None
-    speaker: Optional[str] = None
+    voice: Optional[str] = None
     temperature: float = 0.8
     top_k: int = 30
     top_p: float = 0.8
@@ -86,6 +86,32 @@ class OpenAISpeechRequest(BaseModel):
         return self
 
 
+class OpenAIVoice(BaseModel):
+    """对齐 OpenAI `audio.voice` 资源；扩展字段为 IndexTTS 自有。"""
+
+    id: str
+    object: Literal["audio.voice"] = "audio.voice"
+    name: str
+    created_at: int
+    description: str = ""
+    language: Optional[str] = None
+    gender: Optional[str] = None
+    preview_url: Optional[str] = None
+    preview_path: Optional[str] = None
+    request_count: int = 0
+    total_audio_seconds: float = 0.0
+    last_used_at: Optional[str] = None
+    updated_at: Optional[int] = None
+
+
+class OpenAIVoiceListResponse(BaseModel):
+    object: Literal["list"] = "list"
+    data: List[OpenAIVoice]
+    has_more: bool = False
+    first_id: Optional[str] = None
+    last_id: Optional[str] = None
+
+
 class VoiceInfo(BaseModel):
     id: int
     voice_id: str
@@ -103,9 +129,9 @@ class VoiceInfo(BaseModel):
     audio_path: Optional[str] = None
 
 
-class SpeakersListResponse(BaseModel):
+class VoiceListResponse(BaseModel):
     voices: List[VoiceInfo]
-    speakers: List[str]
+    voice_ids: List[str]
     count: int
     directory: str
     page: int = 1
@@ -125,7 +151,7 @@ class UploadAudioResponse(BaseModel):
     status: str
     message: str
     file_path: str
-    speaker_name: str
+    voice_name: str
     voice_id: str
 
 
@@ -140,7 +166,7 @@ class UploadRefAudioResponse(BaseModel):
 
 
 class VoiceCreateRequest(BaseModel):
-    """仅创建音色元数据（不上传音频）。磁盘上可无对应文件，后续再通过 /upload_audio 指定同一 voice_id 上传音频。"""
+    """仅创建音色元数据（不上传音频）。磁盘上可无对应文件，后续再通过 POST /v1/audio/voices 上传音频。"""
 
     voice_id: str
     name: Optional[str] = None

@@ -98,12 +98,12 @@ def _wav_to_opus_bytes(wav_bytes: bytes) -> bytes:
     )
 
 
-def speaker_audio_path(voice_id: str) -> str:
-    """相对路径，与路由 GET /speakers/{voice_id}/audio 一致；前端可用「站点公网 origin + audio_path」拼接。"""
-    return f"/speakers/{quote(voice_id, safe='')}/audio"
+def voice_audio_path(voice_id: str) -> str:
+    """相对路径，与 GET /v1/audio/voices/{voice_id}/audio 一致。"""
+    return f"/v1/audio/voices/{quote(voice_id, safe='')}/audio"
 
 
-def resolve_speaker_audio_file(prompt_dir: str, voice: VoiceInfo) -> Optional[Path]:
+def resolve_voice_audio_file(prompt_dir: str, voice: VoiceInfo) -> Optional[Path]:
     root = Path(prompt_dir).resolve()
     candidate = (root / voice.file_name).resolve()
     try:
@@ -118,20 +118,20 @@ def resolve_speaker_audio_file(prompt_dir: str, voice: VoiceInfo) -> Optional[Pa
 def voice_audio_url(request: Request, voice_id: str) -> str:
     base = public_base_url()
     if base:
-        return f"{base.rstrip('/')}{speaker_audio_path(voice_id)}"
-    return str(request.url_for("download_speaker_audio", voice_id=voice_id))
+        return f"{base.rstrip('/')}{voice_audio_path(voice_id)}"
+    return str(request.url_for("download_voice_audio", voice_id=voice_id))
 
 
 def with_audio_url(request: Request, voice: VoiceInfo) -> VoiceInfo:
     return voice.model_copy(
         update={
             "audio_url": voice_audio_url(request, voice.voice_id),
-            "audio_path": speaker_audio_path(voice.voice_id),
+            "audio_path": voice_audio_path(voice.voice_id),
         }
     )
 
 
-def file_response_for_speaker(path: Path) -> FileResponse:
+def file_response_for_voice(path: Path) -> FileResponse:
     media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
     return FileResponse(
         path,
