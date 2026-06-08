@@ -22,7 +22,6 @@ def _voice_by_business_id(session: Session, voice_id: str) -> Voice | None:
 
 def _voice_to_info(v: Voice) -> VoiceInfo:
     return VoiceInfo(
-        id=v.id,
         voice_id=v.voice_id,
         name=v.name,
         description=v.description or "",

@@ -59,9 +59,15 @@ uv run alembic upgrade head
 
 ### 音色标识
 
-- **`voice_id`**：业务 ID，与参考音频文件名（无扩展名）一致，如 `Hale.mp3` → `voice_id=Hale`。
-- **`id`**：数据库自增主键（内部用）。
-- 合成时 JSON 字段名为 **`voice`**（OpenAI 兼容），值为 `voice_id`。
+对外只需关心 **`voice_id`**（OpenAI 兼容层映射为响应字段 `id`、TTS 请求字段 `voice`）：
+
+| 层级 | 字段 | 类型 | 说明 |
+|------|------|------|------|
+| 对外 API | 响应 `id` / 请求 `voice` | string | 业务标识，值等于 `voice_id` |
+| 业务逻辑 | `voice_id` | string | 与参考音频文件名（无扩展名）一致，如 `Hale.mp3` → `Hale` |
+| 数据库内部 | `voices.id` | int | 自增主键，仅 ORM/迁移用，**不暴露给 API** |
+
+路径参数、创建表单等内部接口统一使用 **`voice_id`** 命名（对齐 ElevenLabs；OpenAI 列表/详情 JSON 中同值字段名为 **`id`**）。
 
 ### 参考音频路径 `prompt_speech_path`
 
@@ -235,8 +241,8 @@ curl -X POST "${BASE}/v1/audio/voices" \
 
 | 列 | 说明 |
 |----|------|
-| `id` | 自增主键 |
-| `voice_id` | 业务唯一键 |
+| `id` | 自增主键（内部 ORM 用，API 不返回） |
+| `voice_id` | 业务唯一键（对外 API 的 `id` / TTS 的 `voice`） |
 | `name` / `description` / `language` / `gender` / `file_name` | 元数据 |
 | `request_count` / `total_audio_seconds` / `last_used_at` | 使用统计 |
 | `created_at` / `updated_at` | ISO 时间 |

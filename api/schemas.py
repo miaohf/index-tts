@@ -113,7 +113,8 @@ class OpenAIVoiceListResponse(BaseModel):
 
 
 class VoiceInfo(BaseModel):
-    id: int
+    """服务层音色 DTO；对外 OpenAI 格式见 ``OpenAIVoice``（其 ``id`` = ``voice_id``）。"""
+
     voice_id: str
     name: str
     description: str = ""

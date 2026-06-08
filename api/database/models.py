@@ -11,7 +11,10 @@ class Base(DeclarativeBase):
 
 
 class Voice(Base):
-    """音色库单表：元数据 + 使用统计。"""
+    """音色库单表：元数据 + 使用统计。
+
+    ``id`` 为内部自增主键；对外业务标识与 API 均使用 ``voice_id``。
+    """
 
     __tablename__ = "voices"
 
