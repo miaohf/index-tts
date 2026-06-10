@@ -9,7 +9,7 @@ from api.schemas import EnhancedTTSRequest, OpenAISpeechRequest, StreamTTSReques
 from api.text_segment import split_text
 from api.utils.audio import encode_audio_bytes
 
-logger = logging.getLogger("indextts2-api")
+logger = logging.getLogger("indextts2-tts")
 
 router = APIRouter(tags=["tts"])
 

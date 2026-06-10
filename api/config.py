@@ -98,6 +98,41 @@ SESSION_META_FILENAME = ".session.json"
 EPHEMERAL_REF_PREFIX = "ephemeral/"
 
 
+def whisper_model_size() -> str:
+    """faster-whisper 模型尺寸，默认 medium；INDEX_TTS_WHISPER_MODEL。"""
+    return os.environ.get("INDEX_TTS_WHISPER_MODEL", "medium").strip() or "medium"
+
+
+def whisper_device() -> str:
+    """推理设备：auto / cuda / cpu；INDEX_TTS_WHISPER_DEVICE。"""
+    raw = os.environ.get("INDEX_TTS_WHISPER_DEVICE", "auto").strip().lower()
+    if raw in ("cuda", "cpu"):
+        return raw
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return "cuda"
+    except ImportError:
+        pass
+    return "cpu"
+
+
+def whisper_compute_type(device: str | None = None) -> str:
+    """INDEX_TTS_WHISPER_COMPUTE_TYPE；未设置时 cuda→float16，cpu→int8。"""
+    override = os.environ.get("INDEX_TTS_WHISPER_COMPUTE_TYPE", "").strip()
+    if override:
+        return override
+    dev = (device or whisper_device()).lower()
+    return "float16" if dev == "cuda" else "int8"
+
+
+def whisper_download_root() -> str | None:
+    """模型缓存目录；INDEX_TTS_WHISPER_DOWNLOAD_ROOT。"""
+    v = os.environ.get("INDEX_TTS_WHISPER_DOWNLOAD_ROOT", "").strip()
+    return v or None
+
+
 VOICE_SORT_FIELDS = {
     "voice_id": "voice_id",
     "name": "name",

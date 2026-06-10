@@ -12,7 +12,7 @@ BASE="http://127.0.0.1:8002"   # 下文 {base} 即此地址
 
 | 方式 | 入口 | 说明 |
 |------|------|------|
-| **队列模式（推荐生产）** | `python api_server.py` → `api.gateway_main:app` | 1 网关 + N GPU Worker + Redis。对外 TTS 仅 **`POST /v1/audio/speech`**。 |
+| **队列模式（推荐生产）** | `python api_server.py` → `api.gateway_main:app` | 1 网关 + N GPU Worker + Redis。TTS：**`POST /v1/audio/speech`**；转写：**`POST /v1/audio/transcriptions`**（网关内 faster-whisper，不走队列）。 |
 | **单体模式（开发/调试）** | `uvicorn api.main:app` | 单进程加载模型，同步返回 WAV；另含 `/tts`、`/tts_v2`、`/tts_stream`。 |
 
 ### 队列模式启动
@@ -39,6 +39,16 @@ python api_server.py --gpus 4 --host 0.0.0.0 --port 8002 \
 | `INDEX_TTS_PUBLIC_BASE_URL` | 无 | 公网前缀，用于 `preview_url` |
 | `INDEX_TTS_PROMPT_DIR` | `assets/speakers` | 音色库目录（含 `voices.db`） |
 | `INDEX_TTS_MAX_UPLOAD_BYTES` | 50 MiB | 上传大小上限 |
+| `INDEX_TTS_WHISPER_MODEL` | `medium` | faster-whisper 模型尺寸 |
+| `INDEX_TTS_WHISPER_DEVICE` | `auto` | 转写设备：`cuda` / `cpu` / `auto` |
+| `INDEX_TTS_WHISPER_COMPUTE_TYPE` | 自动 | cuda→float16，cpu→int8 |
+| `INDEX_TTS_WHISPER_DOWNLOAD_ROOT` | 无 | Whisper 模型缓存目录 |
+
+依赖安装（转写）：
+
+```bash
+uv sync --extra asr
+```
 
 ### 单体模式
 
@@ -138,7 +148,65 @@ curl -X POST "${BASE}/v1/audio/speech?wait_timeout_seconds=120" \
 
 ---
 
-## 4. 音色：`/v1/audio/voices`
+## 4. 语音转写：`POST /v1/audio/transcriptions`
+
+OpenAI Audio Transcriptions 兼容；基于 **faster-whisper**，在网关/单体进程内直接推理（**不经过 Redis TTS 队列**）。
+
+```
+POST {base}/v1/audio/transcriptions
+Content-Type: multipart/form-data
+```
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `file` | 是 | 待转写音频（支持常见格式，如 wav、mp3、m4a、webm） |
+| `model` | 否 | 默认 `whisper-1`；实际模型尺寸由 `INDEX_TTS_WHISPER_MODEL` 决定 |
+| `language` | 否 | ISO-639-1，如 `zh`、`en`；省略则自动检测 |
+| `prompt` | 否 | 可选上下文提示，提高专有名词识别 |
+| `response_format` | 否 | `json`（默认）、`text`、`srt`、`verbose_json`、`vtt` |
+| `temperature` | 否 | 0～1，默认 0 |
+
+```bash
+# JSON 结果
+curl -X POST "${BASE}/v1/audio/transcriptions" \
+  -F "file=@audio.wav" \
+  -F "model=whisper-1" \
+  -F "language=zh" \
+  -F "response_format=json"
+
+# 纯文本
+curl -X POST "${BASE}/v1/audio/transcriptions" \
+  -F "file=@audio.wav" \
+  -F "response_format=text"
+
+# 带时间轴（SRT 字幕）
+curl -X POST "${BASE}/v1/audio/transcriptions" \
+  -F "file=@audio.wav" \
+  -F "response_format=srt" \
+  -o output.srt
+```
+
+`json` 响应示例：
+
+```json
+{"text": "转写结果文本"}
+```
+
+`verbose_json` 额外包含 `language`、`duration`、`segments`（每段起止时间与置信度等）。
+
+| 环境变量 | 默认 | 说明 |
+|----------|------|------|
+| `INDEX_TTS_WHISPER_MODEL` | `medium` | 模型：`tiny` / `base` / `small` / `medium` / `large-v3` 等 |
+| `INDEX_TTS_WHISPER_DEVICE` | `auto` | `cuda` / `cpu` / `auto` |
+| `INDEX_TTS_WHISPER_COMPUTE_TYPE` | 自动 | 覆盖精度，如 `float16`、`int8` |
+| `INDEX_TTS_WHISPER_DOWNLOAD_ROOT` | 无 | 模型下载/缓存目录 |
+| `INDEX_TTS_MAX_UPLOAD_BYTES` | 50 MiB | 与音色上传共用上限 |
+
+**注意**：首次请求会下载 Whisper 权重；网关与 TTS Worker 共享 GPU 时，转写可能占用额外显存。未安装 `faster-whisper` 时返回 **503**。
+
+---
+
+## 5. 音色：`/v1/audio/voices`
 
 OpenAI 风格；网关与单体模式均提供。
 
@@ -249,7 +317,7 @@ curl -X POST "${BASE}/v1/audio/voices" \
 
 ---
 
-## 5. 临时参考音：`POST /ref-audio/upload`
+## 6. 临时参考音：`POST /ref-audio/upload`
 
 视频翻译等场景，**不入库**，TTL 自动清理。
 
@@ -278,7 +346,7 @@ curl -X POST "${BASE}/ref-audio/upload" \
 
 ---
 
-## 6. 队列运维（仅网关）
+## 7. 队列运维（仅网关）
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
@@ -299,7 +367,7 @@ Redis 直查：`LLEN indextts:tts:jobs`、`ZCARD indextts:tts:requests`。
 
 ---
 
-## 7. 端点一览
+## 8. 端点一览
 
 ### 队列网关
 
@@ -307,6 +375,7 @@ Redis 直查：`LLEN indextts:tts:jobs`、`ZCARD indextts:tts:requests`。
 |------|------|------|
 | GET | `/` | 服务信息 |
 | POST | `/v1/audio/speech` | **TTS 合成** |
+| POST | `/v1/audio/transcriptions` | **语音转写**（faster-whisper） |
 | GET | `/v1/audio/voices` | 音色列表 |
 | GET | `/v1/audio/voices/{voice_id}` | 音色详情 |
 | POST | `/v1/audio/voices` | 上传参考音并创建 |
@@ -325,7 +394,7 @@ Redis 直查：`LLEN indextts:tts:jobs`、`ZCARD indextts:tts:requests`。
 
 ---
 
-## 8. 错误码
+## 9. 错误码
 
 | HTTP | 含义 |
 |------|------|
@@ -335,17 +404,29 @@ Redis 直查：`LLEN indextts:tts:jobs`、`ZCARD indextts:tts:requests`。
 | 409 | 任务未完成 |
 | 413 | 上传过大 |
 | 422 | JSON 非法 |
-| 503 | 队列满（网关） |
+| 503 | 队列满（网关）；或未安装 faster-whisper（转写） |
 | 504 | 等待超时（网关） |
 
 ---
 
-## 9. 示例与工具
+## 10. 示例与工具
 
-### 测试脚本
+### TTS 测试脚本
 
 ```bash
 .venv/bin/python test.py --text-file your.txt --voice yeqiantong --wait-timeout 600 -o out.wav
+```
+
+### 转写测试脚本
+
+```bash
+.venv/bin/python test_transcribe.py --audio audio.wav --language zh -o transcript.json
+
+# 输出 SRT 字幕
+.venv/bin/python test_transcribe.py --audio audio.wav --response-format srt -o output.srt
+
+# 打印纯文本到 stdout
+.venv/bin/python test_transcribe.py --audio audio.wav --response-format text
 ```
 
 ### OpenClaw
@@ -366,14 +447,16 @@ tools:
 
 ---
 
-## 10. 代码对应
+## 11. 代码对应
 
 | 模块 | 路径 |
 |------|------|
 | 队列网关 | `api/gateway_main.py`、`api/routers/tts_queue.py`、`api/routers/voices.py` |
+| 语音转写 | `api/routers/transcriptions.py`、`api/services/transcription.py` |
 | GPU Worker | `api_worker.py` |
 | 单体 API | `api/main.py`、`api/routers/tts.py` |
 | 音色服务 | `api/services/voices.py`、`api/services/voice_read.py`、`api/services/voice_write.py` |
 | 请求模型 | `api/schemas.py` |
+| 测试脚本 | `test.py`（TTS）、`test_transcribe.py`（转写） |
 
 文档与实现不一致时，以代码与 `{base}/docs` 为准。

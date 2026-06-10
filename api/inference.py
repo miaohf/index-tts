@@ -16,7 +16,7 @@ from api.services.ephemeral_audio import touch_session_expiry
 from api.utils.ref_audio_path import resolve_ref_audio_path
 from api.voice_context import resolve_prompt_dir
 
-logger = logging.getLogger("indextts2-api")
+logger = logging.getLogger("indextts2-tts")
 
 
 def clear_cuda_cache() -> None:

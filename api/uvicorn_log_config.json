@@ -4,13 +4,13 @@
   "formatters": {
     "default": {
       "()": "api.log_formatter.IndexTTSFormatter",
-      "fmt": "%(asctime)s - %(levelname_fmt)s - %(location)s %(message)s",
+      "fmt": "%(asctime)s - %(levelname_fmt)s - %(task_fmt)s%(location)s %(message)s",
       "datefmt": "%Y-%m-%d %H:%M:%S",
       "use_colors": true
     },
     "access": {
       "()": "api.log_formatter.IndexTTSAccessFormatter",
-      "fmt": "%(asctime)s - %(levelname_fmt)s %(client_addr)s - \"%(request_line)s\" %(status_code)s",
+      "fmt": "%(asctime)s - %(levelname_fmt)s - %(task_fmt)s%(client_addr)s - \"%(request_line)s\" %(status_code)s",
       "datefmt": "%Y-%m-%d %H:%M:%S",
       "use_colors": true
     }
@@ -59,6 +59,16 @@
       "propagate": false
     },
     "indextts2-infer": {
+      "handlers": ["default"],
+      "level": "INFO",
+      "propagate": false
+    },
+    "indextts2-stt": {
+      "handlers": ["default"],
+      "level": "INFO",
+      "propagate": false
+    },
+    "indextts2-tts": {
       "handlers": ["default"],
       "level": "INFO",
       "propagate": false

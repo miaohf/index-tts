@@ -30,6 +30,8 @@ def configure_logging(
         "indextts2-worker",
         "indextts2-launcher",
         "indextts2-infer",
+        "indextts2-stt",
+        "indextts2-tts",
     ):
         if name in config.get("loggers", {}):
             config["loggers"][name]["level"] = log_level

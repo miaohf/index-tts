@@ -25,7 +25,7 @@ from api.services.queue_submit_service import (
 from api.text_segment import split_text
 from api.utils.audio import transcode_wav_bytes
 
-logger = logging.getLogger("indextts2-api")
+logger = logging.getLogger("indextts2-tts")
 router = APIRouter(tags=["tts"])
 
 

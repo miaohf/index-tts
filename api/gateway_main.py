@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
-from api.routers import ref_audio, root_queue, tts_queue, voices
+from api.routers import ref_audio, root_queue, transcriptions, tts_queue, voices
 from api.services.ephemeral_audio import run_cleanup_loop
 
 _API_DESCRIPTION = """
@@ -29,6 +29,7 @@ python api_server.py --gpus 4 --redis-url redis://127.0.0.1:6379/0
 ### 说明
 - 音色库：**GET/POST /v1/audio/voices**（OpenAI 兼容）；
 - 对外 TTS：**POST /v1/audio/speech**（OpenAI 兼容）；
+- 语音转写：**POST /v1/audio/transcriptions**（OpenAI 兼容，faster-whisper）；
 - 视频翻译临时参考音：**POST /ref-audio/upload**（`session_id` 为表单字段，不入库，TTL 自动清理）；
 - 网关负责排队与同步等待；推理由 GPU Worker 完成。
 """
@@ -53,6 +54,7 @@ app = FastAPI(
 )
 app.include_router(root_queue.router)
 app.include_router(voices.router)
+app.include_router(transcriptions.router)
 app.include_router(ref_audio.router)
 app.include_router(tts_queue.router)
 

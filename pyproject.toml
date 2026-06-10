@@ -77,6 +77,10 @@ webui = [
 deepspeed = [
   "deepspeed==0.17.1",
 ]
+# faster-whisper ASR：`uv sync --extra asr`
+asr = [
+  "faster-whisper>=1.1.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/index-tts/index-tts"

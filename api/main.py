@@ -12,7 +12,7 @@ if "CUDA_VISIBLE_DEVICES" not in os.environ:
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
-from api.routers import root, tts, voices
+from api.routers import root, transcriptions, tts, voices
 
 _API_DESCRIPTION = """
 ## IndexTTS 2.0 API 使用说明
@@ -32,6 +32,7 @@ python api_server.py --gpus 1
 | GET | / | 服务信息与端点列表 |
 | GET | /v1/audio/voices | 音色列表（OpenAI `audio.voice` 格式） |
 | POST | /v1/audio/speech | OpenAI 兼容 TTS |
+| POST | /v1/audio/transcriptions | OpenAI 兼容语音转写（faster-whisper） |
 | GET | /v1/audio/voices/{voice_id}/audio | 试听/下载参考音频 |
 | POST | /v1/audio/voices | 上传参考音并创建音色 |
 | POST | /tts | 基础 TTS（兼容 1.0） |
@@ -47,6 +48,7 @@ app = FastAPI(title="IndexTTS 2.0 API", version="2.0.0", description=_API_DESCRI
 
 app.include_router(root.router)
 app.include_router(voices.router)
+app.include_router(transcriptions.router)
 app.include_router(tts.router)
 
 
